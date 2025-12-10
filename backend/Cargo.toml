@@ -34,6 +34,7 @@ sha2 = "0.10"
 hex = "0.4"
 subtle = "2.4"
 regex = "1.12.2"
+num_cpus = "1.16"
 
 [profile.release]
 # Optimize for size and reduce memory usage in release builds
