@@ -1,0 +1,15 @@
+pub mod artist_parser;
+pub mod artist_service;
+pub mod auto_download_service;
+pub mod backfill_manager;
+pub mod file_sync_service;
+pub mod genre_cache_service;
+pub mod genre_detection;
+pub mod genre_label_service;
+pub mod internet_stream_service;
+pub mod music_service;
+pub mod playlist_service;
+pub mod reprocess_manager;
+pub mod sync_manager;
+pub mod yt_download_service;
+pub mod youtube_playlist_service;
