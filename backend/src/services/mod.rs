@@ -1,6 +1,7 @@
 pub mod artist_parser;
 pub mod artist_service;
 pub mod auto_download_service;
+pub mod auto_genre_lookup_service;
 pub mod backfill_manager;
 pub mod file_sync_service;
 pub mod genre_cache_service;

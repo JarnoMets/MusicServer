@@ -21,6 +21,7 @@ export interface MusicFilters {
   genre: string
   sort: 'title' | 'artist' | 'album' | 'created_at' | 'updated_at'
   order: 'asc' | 'desc'
+  unconfirmedOnly?: boolean
 }
 
 export interface PaginationState {

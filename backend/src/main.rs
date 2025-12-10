@@ -217,6 +217,10 @@ async fn main() -> std::io::Result<()> {
                         web::put().to(routes::set_artist_genre_handler),
                     )
                     .route(
+                        "/music/confirm-genre",
+                        web::post().to(routes::confirm_genre_handler),
+                    )
+                    .route(
                         "/music/sync/start",
                         web::post().to(routes::start_background_sync),
                     )

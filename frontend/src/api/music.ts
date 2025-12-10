@@ -43,6 +43,7 @@ export const musicAPI = {
     order?: 'asc' | 'desc'
     limit?: number
     offset?: number
+    unconfirmed_only?: boolean
   }) => api.get('/music', { params }),
   createMusicFile: (data: {
     title: string
@@ -69,6 +70,8 @@ export const musicAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
       ...config,
     }),
+  confirmGenre: (trackId: string, genre: string) =>
+    api.post('/music/confirm-genre', { track_id: trackId, genre }),
 
   // YouTube Downloads
   startYoutubeDownload: (data: {

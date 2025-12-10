@@ -43,6 +43,11 @@ pub async fn get_all_music_files(
             .push(")");
     }
 
+    // Filter for unconfirmed genres: has guessed_genre but no confirmed genre
+    if params.unconfirmed_only.unwrap_or(false) {
+        builder.push(" AND (genre IS NULL OR genre = '') AND guessed_genre IS NOT NULL AND guessed_genre != ''");
+    }
+
     let sort_column = match params.sort.as_deref() {
         Some("artist") => "artist",
         Some("album") => "album",

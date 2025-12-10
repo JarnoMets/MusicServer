@@ -49,11 +49,12 @@ export const useMusicData = () => {
     try {
       const response = await musicAPI.getMusicFiles({
         search: filters.search || undefined,
-        genre: filters.genre || undefined,
+        genre: filters.genre === 'unconfirmed' ? undefined : (filters.genre || undefined),
         sort: filters.sort,
         order: filters.order,
         limit: pagination.limit,
         offset: (pagination.page - 1) * pagination.limit,
+        unconfirmed_only: filters.genre === 'unconfirmed' ? true : undefined,
       })
       musicFiles.value = response.data
     } catch (error) {

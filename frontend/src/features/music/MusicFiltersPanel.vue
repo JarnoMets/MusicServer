@@ -14,6 +14,7 @@ defineProps<Props>()
 const emit = defineEmits<{
   'update:search': [value: string]
   'update:genre': [value: string]
+  'update:unconfirmedOnly': [value: boolean]
   'update:sort': [value: MusicFilters['sort']]
   'update:order': [value: MusicFilters['order']]
   'update:pageSize': [value: number]
@@ -69,6 +70,7 @@ const pageSizeOptions = [25, 50, 100, 250]
         class="select-input"
       >
         <option value="">All Genres</option>
+        <option value="unconfirmed">⭐ Unconfirmed (with *)</option>
         <option v-for="genre in genres" :key="genre" :value="genre">{{ genre }}</option>
       </select>
     </div>
