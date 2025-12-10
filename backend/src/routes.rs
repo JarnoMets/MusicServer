@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::models::{
-    AppState, CreateMusicFileRequest, CreatePlaylistRequest, CreateStreamRequest,
+    AppState, BulkAddToPlaylistByRegexRequest, BulkRenameByRegexRequest, CreateMusicFileRequest, CreatePlaylistRequest, CreateStreamRequest,
     CreateYoutubePlaylistRequest, DetectGenreRequest, DetectGenreResponse, MusicQueryParams,
     PlaylistTrackRequest, UpdateAutoDownloadConfigRequest, UpdateMusicFileRequest,
     UpdatePlaylistRequest, UpdateStreamRequest, UpdateYoutubePlaylistRequest,
@@ -1488,4 +1488,43 @@ pub async fn trigger_auto_download(state: web::Data<AppState>) -> HttpResponse {
 pub async fn stop_auto_download(state: web::Data<AppState>) -> HttpResponse {
     auto_download_service::stop_current_run(&state.auto_download_state);
     HttpResponse::Ok().json(serde_json::json!({"message": "Stop signal sent"}))
+}
+
+// Bulk operations routes
+pub async fn bulk_rename_by_regex_handler(
+    state: web::Data<AppState>,
+    payload: web::Json<BulkRenameByRegexRequest>,
+) -> HttpResponse {
+    let db = &state.db;
+    match music_service::bulk_rename_by_regex(&db, payload.into_inner()).await {
+        Ok(result) => {
+            log::info!("Bulk rename completed: {} files updated", result.updated_count);
+            HttpResponse::Ok().json(result)
+        }
+        Err(e) => {
+            log::error!("Error in bulk rename: {}", e);
+            HttpResponse::BadRequest().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+pub async fn bulk_add_to_playlist_by_regex_handler(
+    state: web::Data<AppState>,
+    payload: web::Json<BulkAddToPlaylistByRegexRequest>,
+) -> HttpResponse {
+    let db = &state.db;
+    match music_service::bulk_add_to_playlist_by_regex(&db, payload.into_inner()).await {
+        Ok(result) => {
+            log::info!("Bulk add to playlist completed: {} tracks added", result.added_count);
+            HttpResponse::Ok().json(result)
+        }
+        Err(e) => {
+            log::error!("Error in bulk add to playlist: {}", e);
+            HttpResponse::BadRequest().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
 }

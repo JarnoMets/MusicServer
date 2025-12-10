@@ -17,6 +17,11 @@ const routes = [
     component: () => import('../features/admin/DownloaderTab.vue')
   },
   {
+    path: '/admin/bulk-operations',
+    name: 'bulk-operations',
+    component: () => import('../features/admin/BulkOperations.vue')
+  },
+  {
     path: '/upload',
     name: 'upload',
     component: () => import('../views/Upload.vue')

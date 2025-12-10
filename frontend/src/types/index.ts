@@ -17,3 +17,12 @@ export interface Playlist {
   created_at: string
   updated_at: string
 }
+
+export interface PlaylistSummary {
+  id: string
+  name: string
+  description?: string
+  track_count: number
+  created_at: string
+  updated_at: string
+}

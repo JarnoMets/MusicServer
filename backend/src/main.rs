@@ -275,7 +275,10 @@ async fn main() -> std::io::Result<()> {
                             .route("/auto-download/config", web::put().to(routes::update_auto_download_config))
                             .route("/auto-download/status", web::get().to(routes::get_auto_download_status))
                             .route("/auto-download/trigger", web::post().to(routes::trigger_auto_download))
-                            .route("/auto-download/stop", web::post().to(routes::stop_auto_download)),
+                            .route("/auto-download/stop", web::post().to(routes::stop_auto_download))
+                            // Bulk operations
+                            .route("/music/bulk-rename", web::post().to(routes::bulk_rename_by_regex_handler))
+                            .route("/music/bulk-add-to-playlist", web::post().to(routes::bulk_add_to_playlist_by_regex_handler)),
                     ),
             )
     })
