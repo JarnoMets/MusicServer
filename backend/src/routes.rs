@@ -694,6 +694,87 @@ pub async fn set_artist_genre_handler(
 }
 
 #[derive(serde::Deserialize)]
+pub struct ConfirmGenreRequest {
+    pub track_id: String,
+    pub genre: String,
+}
+
+pub async fn confirm_genre_handler(
+    state: web::Data<AppState>,
+    payload: web::Json<ConfirmGenreRequest>,
+) -> HttpResponse {
+    let db = &state.db;
+    
+    // Parse track ID
+    let track_id = match uuid::Uuid::parse_str(&payload.track_id) {
+        Ok(id) => id,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Invalid track ID"
+            }))
+        }
+    };
+
+    // Get the track
+    let track = match sqlx::query_as::<_, crate::models::MusicFile>(
+        "SELECT id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at FROM music_files WHERE id = $1"
+    )
+    .bind(track_id)
+    .fetch_optional(&db.pool)
+    .await {
+        Ok(Some(track)) => track,
+        Ok(None) => {
+            return HttpResponse::NotFound().json(serde_json::json!({
+                "error": "Track not found"
+            }))
+        }
+        Err(e) => {
+            log::error!("Error fetching track: {}", e);
+            return HttpResponse::InternalServerError().finish()
+        }
+    };
+
+    // Update the track's genre
+    if let Err(e) = sqlx::query("UPDATE music_files SET genre = $1, updated_at = NOW() WHERE id = $2")
+        .bind(&payload.genre)
+        .bind(track_id)
+        .execute(&db.pool)
+        .await {
+        log::error!("Error updating track genre: {}", e);
+        return HttpResponse::InternalServerError().finish()
+    }
+
+    // If the artist doesn't have a confirmed genre yet, set it
+    if let Some(artist) = &track.artist {
+        if !artist.trim().is_empty() {
+            // Check if artist has a confirmed genre (not "Unknown")
+            match sqlx::query_scalar::<_, String>(
+                "SELECT genre FROM artist_genres WHERE artist_name = $1"
+            )
+            .bind(artist)
+            .fetch_optional(&db.pool)
+            .await {
+                Ok(Some(current_genre)) if current_genre != "Unknown" => {
+                    // Artist already has a confirmed genre, skip
+                }
+                _ => {
+                    // Artist doesn't exist or has "Unknown" genre, set it
+                    if let Err(e) = artist_service::set_artist_genre(&db, artist, &payload.genre).await {
+                        log::warn!("Error setting artist genre: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "track_id": payload.track_id,
+        "genre": payload.genre
+    }))
+}
+
+#[derive(serde::Deserialize)]
 pub struct RenameArtistRequest {
     pub new_name: String,
 }

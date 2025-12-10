@@ -54,6 +54,8 @@ pub struct MusicQueryParams {
     pub order: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    /// Filter to only show unconfirmed genres (guessed_genre set but genre not set)
+    pub unconfirmed_only: Option<bool>,
 }
 
 /// Artist summary with genre and song count

@@ -7,7 +7,9 @@ import { calculateTotalDuration } from '../../utils/musicFormatters'
 import MusicFiltersPanel from './MusicFiltersPanel.vue'
 import MusicTable from './MusicTable.vue'
 import EditTrackDrawer from './EditTrackDrawer.vue'
+import ConfirmGenreModal from './ConfirmGenreModal.vue'
 import type { MusicFile } from '../../types/MusicTab'
+import { ref } from 'vue'
 
 // Props for permission-based UI
 interface Props {
@@ -49,6 +51,12 @@ const { playTrack, deleteTrack, addTrackToPlaylist } = useTrackActions(() => {
   fetchMusic()
 })
 
+// Confirm genre modal state
+const confirmGenreModal = ref({
+  isOpen: false,
+  track: null as MusicFile | null,
+})
+
 // Track event handlers
 const handlePlayTrack = (track: MusicFile) => {
   playTrack(track)
@@ -77,6 +85,21 @@ const handleAddToPlaylist = async (trackId: string, playlistId: string) => {
     await addTrackToPlaylist(trackId, playlistId)
     playlistMenuOpen.value = null
   }
+}
+
+const handleConfirmGenre = (track: MusicFile) => {
+  if (canManage()) {
+    confirmGenreModal.value = {
+      isOpen: true,
+      track,
+    }
+  }
+}
+
+const handleGenreConfirmed = () => {
+  confirmGenreModal.value.isOpen = false
+  confirmGenreModal.value.track = null
+  fetchMusic()
 }
 
 // Edit state handlers
@@ -137,6 +160,7 @@ const handleEditFormUpdate = {
       @track:play="handlePlayTrack"
       @track:edit="handleEditTrack"
       @track:delete="handleDeleteTrack"
+      @track:confirm-genre="handleConfirmGenre"
       @playlist:toggle="handleTogglePlaylistMenu"
       @playlist:add="handleAddToPlaylist"
       @reset="resetFilters"
@@ -171,6 +195,15 @@ const handleEditFormUpdate = {
       @update:duration="handleEditFormUpdate.duration"
       @save="saveEdit"
       @close="closeEdit"
+    />
+
+    <!-- Confirm Genre Modal (only when logged in) -->
+    <ConfirmGenreModal
+      v-if="canManage()"
+      :is-open="confirmGenreModal.isOpen"
+      :track="confirmGenreModal.track || undefined"
+      @close="confirmGenreModal.isOpen = false"
+      @confirm="handleGenreConfirmed"
     />
   </div>
 </template>

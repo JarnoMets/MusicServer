@@ -21,6 +21,7 @@ const emit = defineEmits<{
   'track:play': [track: MusicFile]
   'track:edit': [track: MusicFile]
   'track:delete': [track: MusicFile]
+  'track:confirm-genre': [track: MusicFile]
   'playlist:toggle': [trackId: string]
   'playlist:add': [trackId: string, playlistId: string]
   reset: []
@@ -175,7 +176,14 @@ const handleRowClick = (index: number) => {
           <td>{{ track.album || '—' }}</td>
           <td>
             <span v-if="track.genre" class="genre-badge">{{ track.genre }}</span>
-            <span v-else-if="track.guessed_genre" class="genre-badge muted">{{ track.guessed_genre }}*</span>
+            <span 
+              v-else-if="track.guessed_genre" 
+              class="genre-badge muted clickable"
+              @click.stop="emit('track:confirm-genre', track)"
+              title="Click to confirm genre"
+            >
+              {{ track.guessed_genre }}*
+            </span>
             <span v-else class="genre-badge empty">Untagged</span>
           </td>
           <td class="duration">
@@ -476,6 +484,23 @@ const handleRowClick = (index: number) => {
   color: var(--text-secondary);
   border-color: rgba(148, 163, 184, 0.3);
   font-style: italic;
+}
+
+.genre-badge.muted.clickable {
+  cursor: pointer;
+  opacity: 1;
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--text-color);
+  border-color: rgba(251, 191, 36, 0.5);
+  font-style: italic;
+  transition: all 0.2s ease;
+}
+
+.genre-badge.muted.clickable:hover {
+  opacity: 1;
+  background: rgba(251, 191, 36, 0.25);
+  border-color: rgba(251, 191, 36, 0.8);
+  transform: scale(1.08);
 }
 
 .genre-badge.empty {
