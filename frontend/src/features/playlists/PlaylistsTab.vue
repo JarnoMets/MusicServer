@@ -77,9 +77,33 @@
           <h2>Playlists</h2>
           <p class="subtitle">Organize your music into custom playlists</p>
         </div>
-        <button v-if="canEdit" @click="showCreateForm = true" class="btn btn-primary">
-          <Icon name="plus" :size="16" /> New Playlist
-        </button>
+        <div class="header-actions">
+          <div class="search-box">
+            <Icon name="search" :size="16" />
+            <input 
+              v-model="searchQuery" 
+              type="text" 
+              placeholder="Search playlists..."
+              @input="debouncedSearch"
+            />
+            <button v-if="searchQuery" class="clear-search" @click="clearSearch">
+              <Icon name="x" :size="14" />
+            </button>
+          </div>
+          <div class="sort-controls">
+            <select v-model="sortBy" class="sort-select">
+              <option value="created-desc">Newest</option>
+              <option value="created-asc">Oldest</option>
+              <option value="tracks-desc">Most Tracks</option>
+              <option value="tracks-asc">Least Tracks</option>
+              <option value="name-asc">Name (A-Z)</option>
+              <option value="name-desc">Name (Z-A)</option>
+            </select>
+          </div>
+          <button v-if="canEdit" @click="showCreateForm = true" class="btn btn-primary">
+            <Icon name="plus" :size="16" /> New Playlist
+          </button>
+        </div>
       </div>
 
       <!-- Create/Edit Form Modal -->
@@ -140,9 +164,9 @@
       </div>
 
       <!-- Playlists Grid -->
-      <div v-else-if="playlists.length" class="playlists-grid">
+      <div v-else-if="filteredPlaylists.length" class="playlists-grid">
         <article 
-          v-for="playlist in playlists" 
+          v-for="playlist in filteredPlaylists" 
           :key="playlist.id" 
           class="playlist-card"
           @click="openPlaylistDetail(playlist.id)"
@@ -241,6 +265,8 @@ const loadingDetail = ref(false)
 const saving = ref(false)
 const showCreateForm = ref(false)
 const editingPlaylist = ref<Playlist | null>(null)
+const searchQuery = ref('')
+const sortBy = ref<'created-desc' | 'created-asc' | 'tracks-desc' | 'tracks-asc' | 'name-asc' | 'name-desc'>('created-desc')
 const formData = ref({
   name: '',
   description: '',
@@ -249,6 +275,47 @@ const formData = ref({
 const { playLocalTrack } = usePlayer()
 const { success, error } = useToast()
 const { confirm } = useConfirm()
+
+const debouncedSearch = () => {
+  // Filter is reactive, no action needed
+}
+
+const clearSearch = () => {
+  searchQuery.value = ''
+}
+
+// Filter playlists based on search
+const filteredPlaylists = computed(() => {
+  let result = playlists.value
+  
+  // Apply search filter
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    result = result.filter(playlist => 
+      playlist.name.toLowerCase().includes(query) ||
+      (playlist.description && playlist.description.toLowerCase().includes(query))
+    )
+  }
+  
+  // Apply sorting
+  const sorted = [...result]
+  switch (sortBy.value) {
+    case 'created-desc':
+      return sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    case 'created-asc':
+      return sorted.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    case 'tracks-desc':
+      return sorted.sort((a, b) => (b.track_count || 0) - (a.track_count || 0))
+    case 'tracks-asc':
+      return sorted.sort((a, b) => (a.track_count || 0) - (b.track_count || 0))
+    case 'name-asc':
+      return sorted.sort((a, b) => a.name.localeCompare(b.name))
+    case 'name-desc':
+      return sorted.sort((a, b) => b.name.localeCompare(a.name))
+    default:
+      return sorted
+  }
+})
 
 const fetchPlaylists = async () => {
   try {
@@ -428,6 +495,88 @@ onMounted(() => {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.9rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 250px;
+  transition: all 0.2s ease;
+}
+
+.search-box:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
+}
+
+.search-box input {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--text-color);
+  font-size: 14px;
+  outline: none;
+}
+
+.search-box input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.clear-search {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.clear-search:hover {
+  color: var(--text-color);
+  background: var(--surface-hover);
+}
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+}
+
+.sort-select {
+  padding: 10px 14px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-color);
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sort-select:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.sort-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
 }
 
 /* Playlist Detail View */
@@ -1025,6 +1174,24 @@ onMounted(() => {
   .header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .header-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .search-box {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .sort-controls {
+    width: 100%;
+  }
+
+  .sort-select {
+    width: 100%;
   }
 
   .playlists-grid {

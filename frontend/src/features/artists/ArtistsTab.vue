@@ -169,6 +169,14 @@
               <Icon name="x" :size="14" />
             </button>
           </div>
+          <div class="sort-controls">
+            <select v-model="sortBy" class="sort-select">
+              <option value="tracks-desc">Most Tracks</option>
+              <option value="tracks-asc">Least Tracks</option>
+              <option value="name-asc">Name (A-Z)</option>
+              <option value="name-desc">Name (Z-A)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -368,6 +376,7 @@ const artistTracks = ref<MusicFile[]>([])
 const loading = ref(false)
 const loadingDetail = ref(false)
 const searchQuery = ref('')
+const sortBy = ref<'tracks-desc' | 'tracks-asc' | 'name-asc' | 'name-desc'>('tracks-desc')
 const showGenreEditor = ref(false)
 const genreInput = ref('')
 const savingGenre = ref(false)
@@ -395,12 +404,30 @@ const clearSearch = () => {
 
 // Filter artists based on search
 const filteredArtists = computed(() => {
-  if (!searchQuery.value.trim()) return artists.value
+  if (!searchQuery.value.trim()) return sortedArtists.value
   const query = searchQuery.value.toLowerCase()
-  return artists.value.filter(artist => 
+  return sortedArtists.value.filter(artist => 
     artist.name.toLowerCase().includes(query) ||
     (artist.genre && artist.genre.toLowerCase().includes(query))
   )
+})
+
+// Sort artists based on selected sort option
+const sortedArtists = computed(() => {
+  const list = [...artists.value]
+  
+  switch (sortBy.value) {
+    case 'tracks-desc':
+      return list.sort((a, b) => b.song_count - a.song_count)
+    case 'tracks-asc':
+      return list.sort((a, b) => a.song_count - b.song_count)
+    case 'name-asc':
+      return list.sort((a, b) => a.name.localeCompare(b.name))
+    case 'name-desc':
+      return list.sort((a, b) => b.name.localeCompare(a.name))
+    default:
+      return list
+  }
 })
 
 // Categorize tracks
@@ -688,6 +715,34 @@ onMounted(() => {
 .clear-search:hover {
   color: var(--text-color);
   background: var(--surface-hover);
+}
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+}
+
+.sort-select {
+  padding: 10px 14px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-color);
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sort-select:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.sort-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
 }
 
 /* Artist Detail View */
@@ -1357,8 +1412,21 @@ onMounted(() => {
     align-items: stretch;
   }
 
+  .header-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
   .search-box {
     min-width: unset;
+    width: 100%;
+  }
+
+  .sort-controls {
+    width: 100%;
+  }
+
+  .sort-select {
     width: 100%;
   }
 

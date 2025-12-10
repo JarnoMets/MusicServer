@@ -137,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useUploadManager } from '../composables/useUploadManager'
 import Icon from '../shared/components/Icons.vue'
 

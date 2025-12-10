@@ -39,10 +39,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useUploadManager } from '../composables/useUploadManager'
-import Icon from './Icons.vue'
+import Icon from '../shared/components/Icons.vue'
 
 const {
   totalCount,
