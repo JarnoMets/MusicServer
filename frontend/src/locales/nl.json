@@ -1,0 +1,14 @@
+{
+  "greeting": "Welkom bij Music Server",
+  "menu": {
+    "home": "Startpagina",
+    "playlists": "Afspeellijsten"
+  },
+  "playlists": {
+    "title": "Afspeellijsten",
+    "create": "Afspeellijst maken",
+    "name": "Naam",
+    "description": "Beschrijving",
+    "empty": "Nog geen afspeellijsten"
+  }
+}

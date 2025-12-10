@@ -1,0 +1,52 @@
+# Ignore patterns for git
+
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Node / Frontend
+node_modules/
+dist/
+.env
+.env.local
+.vite/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Docker
+.dockerignore
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# K8s secrets (if storing locally for testing)
+**/secret*.yaml
+**/secret*.yml
+*.env.k8s

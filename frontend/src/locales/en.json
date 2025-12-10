@@ -1,0 +1,14 @@
+{
+  "greeting": "Welcome to Music Server",
+  "menu": {
+    "home": "Home",
+    "playlists": "Playlists"
+  },
+  "playlists": {
+    "title": "Playlists",
+    "create": "Create Playlist",
+    "name": "Name",
+    "description": "Description",
+    "empty": "No playlists yet"
+  }
+}
