@@ -35,7 +35,6 @@ const {
   filters,
   pagination,
   fetchMusic,
-  refreshAll,
   resetFilters,
   nextPage,
   prevPage,
@@ -124,18 +123,6 @@ const handleEditFormUpdate = {
 
 <template>
   <div class="music-tab">
-    <!-- Header -->
-    <header class="header">
-      <div>
-        <h2>Library</h2>
-        <p class="subtitle">Search, filter, and play everything in your catalog.</p>
-      </div>
-      <div class="header-actions">
-        <router-link v-if="canManage()" to="/upload" class="btn btn-secondary">Upload Music</router-link>
-        <button class="btn btn-outline" @click="refreshAll" :disabled="loading">Refresh</button>
-      </div>
-    </header>
-
     <!-- Filters -->
     <MusicFiltersPanel
       :filters="filters"
@@ -214,90 +201,6 @@ const handleEditFormUpdate = {
   display: flex;
   flex-direction: column;
   gap: 24px;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
-  padding: 28px;
-  background: linear-gradient(145deg, var(--primary-glow), var(--surface-color));
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.header h2 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text-color);
-}
-
-.subtitle {
-  margin: 6px 0 0 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.header-actions {
-  display: flex;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.btn {
-  border: none;
-  border-radius: 12px;
-  padding: 12px 20px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-secondary {
-  background: var(--surface-color);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-
-
-.btn-secondary:hover {
-  background: var(--primary-glow);
-  border-color: var(--primary-color);
-  color: var(--primary-light);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px var(--primary-glow);
-}
-
-.btn-outline {
-  background: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
-
-
-.btn-outline:hover:not(:disabled) {
-  background: var(--background-elevated);
-  border-color: var(--text-tertiary);
-  color: var(--text-color);
-}
-
-.btn-outline:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .footer {

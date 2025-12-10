@@ -205,11 +205,12 @@ const handleRowClick = (index: number) => {
                 <button
                   class="btn-icon"
                   @click.stop="emit('playlist:toggle', track.id)"
-                  title="Add to playlist"
+                  title="Manage playlists"
                 >
-                  <Icon name="plus" :size="16" />
+                  <Icon name="plus-circle" :size="16" />
                 </button>
                 <div v-if="playlistMenuOpen === track.id" class="menu">
+                  <div class="menu-header">Add to playlists</div>
                   <button
                     v-for="playlist in playlists"
                     :key="playlist.id"
@@ -586,6 +587,17 @@ const handleRowClick = (index: number) => {
   z-index: 20;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
   animation: fadeIn 0.2s ease;
+}
+
+.playlist-menu .menu .menu-header {
+  padding: 8px 14px;
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 4px;
 }
 
 @keyframes fadeIn {

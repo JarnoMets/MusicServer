@@ -213,7 +213,7 @@ function itemStatusLabel(status: string) {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  max-width: 900px;
+  width: 100%;
 }
 
 .upload-header {
