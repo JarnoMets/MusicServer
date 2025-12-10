@@ -1,6 +1,5 @@
 use crate::db::Database;
 use crate::models::{CreateMusicFileRequest, MusicFile, MusicQueryParams, UpdateMusicFileRequest};
-use crate::services::{genre_cache_service, genre_detection, genre_label_service};
 use sqlx::QueryBuilder;
 use uuid::Uuid;
 
@@ -101,88 +100,9 @@ pub async fn create_music_file(
     .execute(&db.pool)
     .await?;
 
-    // Determine guessed_genre: check cache first, then fall back to MusicBrainz detection
-    let mut final_guessed_genre = req.guessed_genre.clone();
-
-    // If the request already included a guessed_genre, try to canonicalize it
-    if let Some(ref provided) = req.guessed_genre {
-        if let Ok(Some(canonical)) = genre_label_service::canonicalize(db, provided).await {
-            let _ = sqlx::query(
-                "UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE id = $2",
-            )
-            .bind(&canonical)
-            .bind(id)
-            .execute(&db.pool)
-            .await;
-            final_guessed_genre = Some(canonical);
-        }
-    }
-
-    if let Some(artist_name) = req.artist.clone() {
-        // Check cache
-        match genre_cache_service::get_cached_genre(db, &artist_name).await {
-            Ok(Some(cached)) => {
-                log::debug!(
-                    "create_music_file: cache hit for artist={} -> {}",
-                    artist_name,
-                    cached
-                );
-                // Update the inserted row with the cached guessed genre
-                let _ = sqlx::query(
-                    "UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE id = $2",
-                )
-                .bind(&cached)
-                .bind(id)
-                .execute(&db.pool)
-                .await;
-                final_guessed_genre = Some(cached);
-            }
-            Ok(None) => {
-                log::debug!("create_music_file: cache miss for artist={}", artist_name);
-                // Try detecting via MusicBrainz
-                match genre_detection::detect_genre_for_artist(db, artist_name.clone()).await {
-                    Ok(Some(detected)) => {
-                        log::debug!(
-                            "create_music_file: detected genre for artist={} -> {}",
-                            artist_name,
-                            detected
-                        );
-                        // detect_genre_for_artist canonicalizes where possible already; but ensure we canonicalize final value
-                        let to_set = match genre_label_service::canonicalize(db, &detected).await {
-                            Ok(Some(c)) => c,
-                            _ => detected.clone(),
-                        };
-                        let _ = sqlx::query("UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE id = $2")
-                            .bind(&to_set)
-                            .bind(id)
-                            .execute(&db.pool)
-                            .await;
-                        final_guessed_genre = Some(to_set);
-                    }
-                    Ok(None) => {
-                        log::debug!(
-                            "create_music_file: no genre detected for artist={}",
-                            artist_name
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "create_music_file: error detecting genre for artist={} -> {}",
-                            artist_name,
-                            e
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "create_music_file: error checking genre cache for artist={}: {:?}",
-                    artist_name,
-                    e
-                );
-            }
-        }
-    }
+    // Genre detection is now handled separately by background processes
+    // This keeps the upload fast by not blocking on genre lookups
+    let final_guessed_genre = req.guessed_genre.clone();
 
     Ok(MusicFile {
         id,
