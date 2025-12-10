@@ -39,6 +39,23 @@ defineProps<{
       <rect x="14" y="4" width="4" height="16" />
     </template>
     
+    <template v-else-if="name === 'repeat'">
+      <path d="M17 2l4 4-4 4" />
+      <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+      <path d="M7 22l-4-4 4-4" />
+      <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+    </template>
+    
+    <template v-else-if="name === 'shuffle'">
+      <polyline points="23 18 13 18 6 11 13 4 13 2" />
+      <polyline points="1 6 11 6 18 13 11 20 11 22" />
+    </template>
+    
+    <template v-else-if="name === 'play-circle'">
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="10 8 16 12 10 16 10 8" />
+    </template>
+    
     <template v-else-if="name === 'skip-back'">
       <polygon points="19 20 9 12 19 4 19 20" />
       <line x1="5" y1="19" x2="5" y2="5" />

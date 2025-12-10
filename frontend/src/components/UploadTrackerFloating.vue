@@ -11,8 +11,8 @@
             <button class="close-btn" @click="toggleMinimize" :title="isMinimized ? 'Expand' : 'Collapse'">
               <Icon :name="isMinimized ? 'chevron-up' : 'chevron-down'" :size="16" />
             </button>
-            <button class="close-btn" @click="close" title="Close">
-              <Icon name="x" :size="16" />
+            <button class="close-btn" @click="close" :title="hasActiveUploads ? 'Minimize' : 'Close'">
+              <Icon :name="hasActiveUploads ? 'chevron-down' : 'x'" :size="16" />
             </button>
           </div>
         </div>
@@ -57,23 +57,31 @@ const {
   queueCount,
   totalProgress,
   cancelAllUploads,
+  clearAllUploads,
 } = useUploadManager()
 
 const isMinimized = ref(false)
 const position = ref({ x: 24, y: -1 })
 const isDragging = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
+const isClosed = ref(false)
 
-const isVisible = computed(() => totalCount.value > 0)
+const isVisible = computed(() => totalCount.value > 0 && !isClosed.value)
+const hasActiveUploads = computed(() => uploading.value || queueCount.value > 0)
 
 function toggleMinimize() {
   isMinimized.value = !isMinimized.value
 }
 
 function close() {
-  // We can't truly close it since it's controlled by totalCount
-  // But we can minimize it instead
-  isMinimized.value = true
+  // If uploads are active, just minimize; if all done, hide the tracker
+  if (hasActiveUploads.value) {
+    isMinimized.value = true
+  } else {
+    // Clear all uploads and close the tracker
+    clearAllUploads()
+    isClosed.value = true
+  }
 }
 
 function startDrag(event: MouseEvent) {
