@@ -7,7 +7,7 @@ const routes = [
     component: () => import('../views/Browse.vue'),
     meta: {
       title: 'Library',
-      favicon: '🎵'
+      favicon: null
     }
   },
   {
@@ -16,7 +16,7 @@ const routes = [
     component: () => import('../features/admin/GenreMapper.vue'),
     meta: {
       title: 'Genre Manager',
-      favicon: '🏷️'
+      favicon: null
     }
   },
   {
@@ -25,7 +25,7 @@ const routes = [
     component: () => import('../features/admin/DownloaderTab.vue'),
     meta: {
       title: 'YouTube Downloader',
-      favicon: '📥'
+      favicon: null
     }
   },
   {
@@ -34,7 +34,7 @@ const routes = [
     component: () => import('../features/admin/BulkOperations.vue'),
     meta: {
       title: 'Bulk Operations',
-      favicon: '⚡'
+      favicon: null
     }
   },
   {
@@ -43,7 +43,7 @@ const routes = [
     component: () => import('../views/Upload.vue'),
     meta: {
       title: 'Upload',
-      favicon: '📤'
+      favicon: null
     }
   }
 ]

@@ -70,7 +70,7 @@ const pageSizeOptions = [25, 50, 100, 250]
         class="select-input"
       >
         <option value="">All Genres</option>
-        <option value="unconfirmed">⭐ Unconfirmed (with *)</option>
+        <option value="unconfirmed">Unconfirmed (with *)</option>
         <option v-for="genre in genres" :key="genre" :value="genre">{{ genre }}</option>
       </select>
     </div>
