@@ -132,7 +132,7 @@ const handleRowClick = (index: number) => {
       </div>
     </div>
     <div v-else-if="tracks.length === 0" class="empty">
-      <div class="empty-icon">🎵</div>
+      <div class="empty-icon">♪</div>
       <p>No tracks match your filters.</p>
       <button class="btn btn-outline" @click="emit('reset')">Reset filters</button>
     </div>
