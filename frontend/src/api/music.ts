@@ -70,6 +70,8 @@ export const musicAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
       ...config,
     }),
+  checkDuplicateHash: (hash: string) =>
+    api.post('/music/check-duplicate', { hash }),
   confirmGenre: (trackId: string, genre: string) =>
     api.post('/music/confirm-genre', { track_id: trackId, genre }),
 

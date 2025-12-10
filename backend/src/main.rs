@@ -130,6 +130,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/music", web::get().to(routes::get_music_files))
                     .route("/music", web::post().to(routes::create_music_file))
                     .route("/music/upload", web::post().to(routes::upload_music_files))
+                    .route("/music/check-duplicate", web::post().to(routes::check_duplicate_hash))
                     .route("/music/sync", web::post().to(routes::sync_music_folder))
                     .route("/music/{id}", web::get().to(routes::get_music_file_detail))
                     .route(

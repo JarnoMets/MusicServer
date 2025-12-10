@@ -311,6 +311,36 @@ pub async fn delete_music_file(state: web::Data<AppState>, path: web::Path<Uuid>
     }
 }
 
+pub async fn check_duplicate_hash(
+    state: web::Data<AppState>,
+    payload: web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let db = &state.db;
+    let hash = match payload.get("hash").and_then(|v| v.as_str()) {
+        Some(h) => h,
+        None => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Missing or invalid hash field"
+            }))
+        }
+    };
+
+    match music_service::is_duplicate_hash(&db, hash).await {
+        Ok(exists) => {
+            HttpResponse::Ok().json(serde_json::json!({
+                "hash": hash,
+                "exists": exists
+            }))
+        }
+        Err(e) => {
+            log::error!("Error checking duplicate hash: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to check duplicate"
+            }))
+        }
+    }
+}
+
 pub async fn get_music_file_detail(
     state: web::Data<AppState>,
     path: web::Path<Uuid>,
