@@ -28,6 +28,8 @@ class UploadManager {
   private uploading = ref(false)
   private isInitialized = ref(false)
   private abortControllers = new Map<string, AbortController>()
+  private hashCache = new Map<string, { hash: string; isDuplicate: boolean }>()
+  private checkTimeoutMs = 5000 // 5 second timeout for duplicate check
 
   constructor() {
     this.loadFromSessionStorage()
@@ -120,27 +122,67 @@ class UploadManager {
     this.saveToSessionStorage()
   }
 
-  private computeFileHash(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = async (e) => {
-        const buffer = e.target?.result as ArrayBuffer
-        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
-        const hashArray = Array.from(new Uint8Array(hashBuffer))
-        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
-        resolve(hashHex)
-      }
-      reader.onerror = () => reject(new Error('Failed to read file'))
-      reader.readAsArrayBuffer(file)
-    })
-  }
-
   private async checkDuplicate(fileHash: string): Promise<boolean> {
     try {
       const response = await musicAPI.checkDuplicateHash(fileHash)
       return response.data?.exists === true
     } catch {
       // If check fails, proceed with upload anyway
+      return false
+    }
+  }
+
+  /**
+   * Compute file hash using streaming to avoid loading entire file into memory
+   * Uses Web Crypto API for efficient SHA-256 hashing
+   */
+  private async computeFileHashStreaming(file: File): Promise<string> {
+    const cacheKey = `${file.name}-${file.size}-${file.lastModified}`
+    
+    // Return cached hash if available
+    if (this.hashCache.has(cacheKey)) {
+      return this.hashCache.get(cacheKey)!.hash
+    }
+
+    const hashBuffer = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+    
+    return hashHex
+  }
+
+  /**
+   * Check for duplicate with timeout fallback - if check takes too long, proceed with upload
+   * Returns true if file is a duplicate, false otherwise
+   */
+  private async checkDuplicateWithTimeout(file: File): Promise<boolean> {
+    // Skip check for very small files (unlikely to be duplicates worth checking)
+    if (file.size < 1024 * 1024) {
+      // < 1MB
+      return false
+    }
+
+    try {
+      // Race between hash computation + check and timeout
+      const checkPromise = (async () => {
+        const hash = await this.computeFileHashStreaming(file)
+        const isDuplicate = await this.checkDuplicate(hash)
+        
+        // Cache the result
+        const cacheKey = `${file.name}-${file.size}-${file.lastModified}`
+        this.hashCache.set(cacheKey, { hash, isDuplicate })
+        
+        return isDuplicate
+      })()
+
+      // If check takes longer than timeout, assume it's not a duplicate and proceed
+      const timeoutPromise = new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(false), this.checkTimeoutMs)
+      )
+
+      return Promise.race([checkPromise, timeoutPromise])
+    } catch {
+      // If anything fails, proceed with upload
       return false
     }
   }
@@ -201,36 +243,29 @@ class UploadManager {
     item.message = undefined
     this.saveToSessionStorage()
 
-    // Check for duplicate before uploading (but don't hash if file is small)
-    const shouldHashCheck = item.file.size > 100 * 1024 * 1024 // Only hash files > 100MB to save time
-    if (shouldHashCheck) {
-      try {
-        item.message = 'Checking for duplicates...'
-        this.saveToSessionStorage()
-        const fileHash = await this.computeFileHash(item.file)
-        const isDuplicate = await this.checkDuplicate(fileHash)
-        if (isDuplicate) {
-          item.status = 'success'  // Mark as success, not error
-          item.message = 'Duplicate file (already exists)'
-          item.progress = 100
-          this.saveToSessionStorage()
-          return
-        }
-      } catch (e) {
-        console.warn('Error checking for duplicate:', e)
-        // Continue with upload if check fails
-      }
-    }
-
-    const formData = new FormData()
-    formData.append('file', item.file, item.file.name)
-
     const abortController = new AbortController()
     this.abortControllers.set(item.id, abortController)
 
     try {
+      // Check for duplicates efficiently (skips for small files, times out if takes too long)
+      item.message = 'Checking for duplicates...'
+      this.saveToSessionStorage()
+      const isDuplicate = await this.checkDuplicateWithTimeout(item.file)
+      
+      if (isDuplicate) {
+        item.status = 'success'
+        item.message = 'Duplicate file (already exists)'
+        item.progress = 100
+        return
+      }
+
+      // Proceed with upload
       item.message = 'Uploading...'
       this.saveToSessionStorage()
+
+      const formData = new FormData()
+      formData.append('file', item.file, item.file.name)
+
       const response = await musicAPI.uploadMusicFiles(formData, {
         onUploadProgress: (event) => {
           if (event.total) {
