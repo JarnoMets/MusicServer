@@ -56,6 +56,7 @@
     </main>
     <ToastContainer />
     <GlobalPlayer />
+    <UploadTrackerFloating />
     
     <!-- Login Modal -->
     <LoginModal
@@ -87,6 +88,7 @@ import ThemeSelector from './shared/components/ThemeSelector.vue'
 import ToastContainer from './shared/components/ToastContainer.vue'
 import LoginModal from './shared/components/LoginModal.vue'
 import ConfirmModal from './shared/components/ConfirmModal.vue'
+import UploadTrackerFloating from './components/UploadTrackerFloating.vue'
 import Icon from './shared/components/Icons.vue'
 import { useTheme } from './composables/useTheme'
 import { useAuth } from './composables/useAuth'
