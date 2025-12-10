@@ -4,27 +4,47 @@ const routes = [
   {
     path: '/',
     name: 'browse',
-    component: () => import('../views/Browse.vue')
+    component: () => import('../views/Browse.vue'),
+    meta: {
+      title: 'Library',
+      favicon: '🎵'
+    }
   },
   {
     path: '/admin/genres',
     name: 'genre-mapper',
-    component: () => import('../features/admin/GenreMapper.vue')
+    component: () => import('../features/admin/GenreMapper.vue'),
+    meta: {
+      title: 'Genre Manager',
+      favicon: '🏷️'
+    }
   },
   {
     path: '/admin/downloader',
     name: 'youtube-downloader',
-    component: () => import('../features/admin/DownloaderTab.vue')
+    component: () => import('../features/admin/DownloaderTab.vue'),
+    meta: {
+      title: 'YouTube Downloader',
+      favicon: '📥'
+    }
   },
   {
     path: '/admin/bulk-operations',
     name: 'bulk-operations',
-    component: () => import('../features/admin/BulkOperations.vue')
+    component: () => import('../features/admin/BulkOperations.vue'),
+    meta: {
+      title: 'Bulk Operations',
+      favicon: '⚡'
+    }
   },
   {
     path: '/upload',
     name: 'upload',
-    component: () => import('../views/Upload.vue')
+    component: () => import('../views/Upload.vue'),
+    meta: {
+      title: 'Upload',
+      favicon: '📤'
+    }
   }
 ]
 
