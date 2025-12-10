@@ -99,47 +99,28 @@ import { useTheme } from './composables/useTheme'
 import { useAuth } from './composables/useAuth'
 import { useToast } from './composables/useToast'
 import { useConfirm } from './composables/useConfirm'
+import { useFavicon } from './composables/useFavicon'
 
 // Initialize theme system
 useTheme()
 
-// Handle dynamic page titles and favicons
+// Initialize dynamic favicons
+useFavicon()
+
+// Handle dynamic page titles
 const router = useRouter()
 
-const updatePageTitle = (title?: string, favicon?: string) => {
+const updatePageTitle = (title?: string) => {
   const finalTitle = title ? `${title} - Music Server` : 'Music Server'
   document.title = finalTitle
-
-  // Update favicon using emoji or dynamic approach
-  if (favicon) {
-    updateFavicon(favicon)
-  }
-}
-
-const updateFavicon = (emoji: string) => {
-  const canvas = document.createElement('canvas')
-  canvas.width = 64
-  canvas.height = 64
-  const ctx = canvas.getContext('2d')
-  if (ctx) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0)'
-    ctx.fillRect(0, 0, 64, 64)
-    ctx.font = '48px Arial'
-    ctx.fillText(emoji, 8, 52)
-    const link = document.querySelector("link[rel*='icon']") as HTMLLinkElement || document.createElement('link')
-    link.type = 'image/x-icon'
-    link.rel = 'shortcut icon'
-    link.href = canvas.toDataURL()
-    document.head.appendChild(link)
-  }
 }
 
 // Watch for route changes
 watch(
   () => router.currentRoute.value,
   (route) => {
-    const meta = route.meta as { title?: string; favicon?: string } | undefined
-    updatePageTitle(meta?.title, meta?.favicon)
+    const meta = route.meta as { title?: string } | undefined
+    updatePageTitle(meta?.title)
   },
   { immediate: true }
 )
