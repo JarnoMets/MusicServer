@@ -43,12 +43,10 @@ class UploadManager {
       if (stored) {
         const state = JSON.parse(stored) as Omit<UploadManagerState, 'isInitialized'>
         // Don't restore files since File objects can't be serialized
-        // Just restore metadata
-        this.uploads.value = state.uploads.map((item) => ({
-          ...item,
-          file: new File([], 'restored'), // Placeholder - will be set if retry is attempted
-        }))
-        this.uploading.value = state.uploading
+        // Only restore completed/successful uploads, not queued or in-progress ones
+        // since we can't actually re-upload without the file
+        this.uploads.value = state.uploads.filter((item) => item.status === 'success')
+        this.uploading.value = false // Never restore uploading state
       }
     } catch (e) {
       console.warn('Failed to load upload state from session storage:', e)
@@ -133,6 +131,8 @@ class UploadManager {
     this.uploading.value = true
     this.saveToSessionStorage()
 
+    // Process uploads sequentially to avoid blocking the UI
+    // This is better than parallel uploads for responsiveness
     for (const item of this.uploads.value) {
       if (item.status === 'success') continue
       if (item.status !== 'queued' && item.status !== 'error') continue
@@ -158,9 +158,17 @@ class UploadManager {
           signal: abortController.signal,
         })
         item.progress = 100
-        item.status = 'success'
-        const inserted = response.data?.inserted as Array<{ title?: string }> | undefined
-        item.message = inserted?.[0]?.title ? `Added ${inserted[0].title}` : 'Uploaded successfully'
+        
+        // Check if this file was marked as duplicate in the response
+        const errors = response.data?.errors as string[] | undefined
+        if (errors && errors.some((err) => err.toLowerCase().includes('duplicate'))) {
+          item.status = 'error'
+          item.message = 'Duplicate file skipped (already exists)'
+        } else {
+          item.status = 'success'
+          const inserted = response.data?.inserted as Array<{ title?: string }> | undefined
+          item.message = inserted?.[0]?.title ? `Added ${inserted[0].title}` : 'Uploaded successfully'
+        }
       } catch (error: any) {
         if (error.name === 'AbortError') {
           // Upload was cancelled
@@ -173,6 +181,9 @@ class UploadManager {
       } finally {
         this.abortControllers.delete(item.id)
         this.saveToSessionStorage()
+        
+        // Small delay between uploads to keep UI responsive
+        await new Promise(resolve => setTimeout(resolve, 100))
       }
     }
 
