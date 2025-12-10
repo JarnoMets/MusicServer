@@ -1,6 +1,6 @@
 use crate::db::Database;
 use chrono::Utc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 use sqlx::PgPool;
@@ -11,6 +11,8 @@ pub struct AutoGenreLookupState {
     pub artists_processed: Arc<AtomicI32>,
     pub lookup_errors: Arc<AtomicI32>,
     pub should_stop: Arc<AtomicBool>,
+    /// Interval in seconds to restart a full pass through unmapped genres (default: 3600 = 1 hour)
+    pub restart_interval_secs: Arc<AtomicU64>,
 }
 
 impl AutoGenreLookupState {
@@ -20,12 +22,21 @@ impl AutoGenreLookupState {
             artists_processed: Arc::new(AtomicI32::new(0)),
             lookup_errors: Arc::new(AtomicI32::new(0)),
             should_stop: Arc::new(AtomicBool::new(false)),
+            restart_interval_secs: Arc::new(AtomicU64::new(3600)), // Default: 1 hour
         }
     }
 
     pub fn reset_counters(&self) {
         self.artists_processed.store(0, Ordering::Relaxed);
         self.lookup_errors.store(0, Ordering::Relaxed);
+    }
+
+    pub fn set_restart_interval(&self, secs: u64) {
+        self.restart_interval_secs.store(secs, Ordering::Relaxed);
+    }
+
+    pub fn get_restart_interval(&self) -> u64 {
+        self.restart_interval_secs.load(Ordering::Relaxed)
     }
 }
 
@@ -36,14 +47,21 @@ impl Default for AutoGenreLookupState {
 }
 
 /// Start the background genre lookup scheduler
-/// Processes up to 5 artists per minute (1 every 12 seconds)
-pub fn start_scheduler(pool: PgPool) {
+/// Continuously processes artists with unknown genres on a schedule
+/// Every `restart_interval_secs`, restarts processing from the oldest unmapped artist
+pub fn start_scheduler(pool: PgPool) -> Arc<AutoGenreLookupState> {
     let state = Arc::new(AutoGenreLookupState::new());
     let state_clone = state.clone();
 
     tokio::spawn(async move {
-        let mut interval_timer = interval(Duration::from_secs(12)); // 5 per minute = 1 every 12 seconds
+        let mut pass_interval = interval(Duration::from_secs(12)); // Process 1 artist every 12 seconds (5 per minute)
         let mut last_reset = Utc::now();
+        let mut last_restart = Utc::now();
+
+        log::info!(
+            "Auto-genre lookup scheduler started. Restart interval: {} seconds",
+            state_clone.get_restart_interval()
+        );
 
         loop {
             if state_clone.should_stop.load(Ordering::Relaxed) {
@@ -51,16 +69,28 @@ pub fn start_scheduler(pool: PgPool) {
                 break;
             }
 
-            interval_timer.tick().await;
+            pass_interval.tick().await;
+
+            // Get the current restart interval (allows runtime updates)
+            let restart_interval = Duration::from_secs(state_clone.get_restart_interval());
+
+            // Check if we should restart the pass (log at restart points)
+            let now = Utc::now();
+            if (now - last_restart).num_seconds() as u64 >= restart_interval.as_secs() {
+                log::info!(
+                    "Auto-genre lookup: Starting new pass through unmapped artists"
+                );
+                state_clone.reset_counters();
+                last_restart = now;
+            }
 
             // Reset counters every minute for monitoring
-            let now = Utc::now();
             if (now - last_reset).num_seconds() > 60 {
                 let processed = state_clone.artists_processed.swap(0, Ordering::Relaxed);
                 let errors = state_clone.lookup_errors.swap(0, Ordering::Relaxed);
                 if processed > 0 || errors > 0 {
                     log::info!(
-                        "Auto-genre lookup: processed={}, errors={}",
+                        "Auto-genre lookup (last minute): processed={}, errors={}",
                         processed,
                         errors
                     );
@@ -75,6 +105,8 @@ pub fn start_scheduler(pool: PgPool) {
             }
         }
     });
+
+    state
 }
 
 /// Get one artist with "Unknown" genre and try to detect their actual genre

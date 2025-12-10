@@ -14,6 +14,7 @@ mod yt_downloader;
 
 use crate::admin_middleware::AdminMiddleware;
 use crate::services::auto_download_service::{self, AutoDownloadState};
+use crate::services::auto_genre_lookup_service;
 use db::Database;
 use models::AppState;
 
@@ -70,6 +71,10 @@ async fn main() -> std::io::Result<()> {
     // Create auto-download state
     let auto_download_state = Arc::new(AutoDownloadState::new());
     
+    // Start the auto-genre lookup scheduler (runs in background continuously)
+    let auto_genre_lookup_state = auto_genre_lookup_service::start_scheduler(db.pool.clone());
+    log::info!("Auto-genre lookup scheduler initialized");
+    
     let download_sessions = yt_downloader::create_download_sessions();
     
     // Start the auto-download scheduler
@@ -85,6 +90,7 @@ async fn main() -> std::io::Result<()> {
         download_sessions,
         http_client,
         auto_download_state,
+        auto_genre_lookup_state,
     });
 
     log::info!("Starting Music Server API on http://0.0.0.0:8081");
