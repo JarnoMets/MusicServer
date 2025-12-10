@@ -120,6 +120,31 @@ class UploadManager {
     this.saveToSessionStorage()
   }
 
+  private computeFileHash(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = async (e) => {
+        const buffer = e.target?.result as ArrayBuffer
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+        const hashArray = Array.from(new Uint8Array(hashBuffer))
+        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+        resolve(hashHex)
+      }
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsArrayBuffer(file)
+    })
+  }
+
+  private async checkDuplicate(fileHash: string): Promise<boolean> {
+    try {
+      const response = await musicAPI.checkDuplicateHash(fileHash)
+      return response.data?.exists === true
+    } catch {
+      // If check fails, proceed with upload anyway
+      return false
+    }
+  }
+
   async startUpload() {
     if (this.uploading.value) return
     
@@ -131,6 +156,9 @@ class UploadManager {
     this.uploading.value = true
     this.saveToSessionStorage()
 
+    // Collect items to retry (502/503 errors) at the end
+    const retryItems: UploadItem[] = []
+
     // Process uploads sequentially to avoid blocking the UI
     // This is better than parallel uploads for responsiveness
     for (const item of this.uploads.value) {
@@ -140,6 +168,27 @@ class UploadManager {
       item.status = 'uploading'
       item.progress = 0
       item.message = undefined
+      this.saveToSessionStorage()
+
+      // Check for duplicate before uploading
+      let isDuplicate = false
+      try {
+        item.message = 'Checking for duplicates...'
+        this.saveToSessionStorage()
+        const fileHash = await this.computeFileHash(item.file)
+        isDuplicate = await this.checkDuplicate(fileHash)
+        if (isDuplicate) {
+          item.status = 'error'
+          item.message = 'Duplicate file skipped (already exists)'
+          item.progress = 100
+          this.saveToSessionStorage()
+          await new Promise(resolve => setTimeout(resolve, 100))
+          continue
+        }
+      } catch (e) {
+        console.warn('Error checking for duplicate:', e)
+        // Continue with upload if check fails
+      }
 
       const formData = new FormData()
       formData.append('file', item.file, item.file.name)
@@ -148,6 +197,8 @@ class UploadManager {
       this.abortControllers.set(item.id, abortController)
 
       try {
+        item.message = 'Uploading...'
+        this.saveToSessionStorage()
         const response = await musicAPI.uploadMusicFiles(formData, {
           onUploadProgress: (event) => {
             if (event.total) {
@@ -175,8 +226,16 @@ class UploadManager {
           item.status = 'error'
           item.message = 'Upload cancelled'
         } else {
-          item.status = 'error'
-          item.message = error?.response?.data?.error || error?.message || 'Upload failed'
+          const status = error?.response?.status
+          // Collect 502/503 errors for retry
+          if (status === 502 || status === 503) {
+            item.status = 'error'
+            item.message = `Server error (${status}), will retry...`
+            retryItems.push(item)
+          } else {
+            item.status = 'error'
+            item.message = error?.response?.data?.error || error?.message || 'Upload failed'
+          }
         }
       } finally {
         this.abortControllers.delete(item.id)
@@ -187,8 +246,89 @@ class UploadManager {
       }
     }
 
+    // Retry 502/503 errors with exponential backoff
+    if (retryItems.length > 0) {
+      await this.retryWithBackoff(retryItems)
+    }
+
     this.uploading.value = false
     this.saveToSessionStorage()
+  }
+
+  private async retryWithBackoff(items: UploadItem[]) {
+    const MAX_RETRIES = 3
+    const BASE_DELAY_MS = 1000
+
+    for (let retryCount = 0; retryCount < MAX_RETRIES; retryCount++) {
+      const delayMs = BASE_DELAY_MS * Math.pow(2, retryCount) // 1s, 2s, 4s
+      
+      console.log(`Retrying ${items.length} items in ${delayMs}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`)
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+
+      const stillNeedRetry: UploadItem[] = []
+
+      for (const item of items) {
+        // Only retry if still in error state
+        if (item.status !== 'error') continue
+
+        const formData = new FormData()
+        formData.append('file', item.file, item.file.name)
+
+        const abortController = new AbortController()
+        this.abortControllers.set(item.id, abortController)
+
+        try {
+          item.message = `Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`
+          this.saveToSessionStorage()
+
+          const response = await musicAPI.uploadMusicFiles(formData, {
+            onUploadProgress: (event) => {
+              if (event.total) {
+                item.progress = Math.round((event.loaded / event.total) * 100)
+                this.saveToSessionStorage()
+              }
+            },
+            signal: abortController.signal,
+          })
+
+          item.progress = 100
+          const errors = response.data?.errors as string[] | undefined
+          if (errors && errors.some((err) => err.toLowerCase().includes('duplicate'))) {
+            item.status = 'error'
+            item.message = 'Duplicate file skipped (already exists)'
+          } else {
+            item.status = 'success'
+            const inserted = response.data?.inserted as Array<{ title?: string }> | undefined
+            item.message = inserted?.[0]?.title ? `Added ${inserted[0].title}` : 'Uploaded successfully'
+          }
+        } catch (error: any) {
+          const status = error?.response?.status
+          if (status === 502 || status === 503) {
+            // Still getting server error, retry again
+            stillNeedRetry.push(item)
+          } else {
+            // Different error, don't retry
+            item.status = 'error'
+            item.message = error?.response?.data?.error || error?.message || 'Upload failed'
+          }
+        } finally {
+          this.abortControllers.delete(item.id)
+          this.saveToSessionStorage()
+        }
+      }
+
+      // Update items to retry for next iteration
+      items = stillNeedRetry
+      if (items.length === 0) break
+    }
+
+    // Mark any remaining items as failed
+    for (const item of items) {
+      if (item.status === 'error') {
+        item.message = 'Upload failed (server unavailable after retries)'
+        this.saveToSessionStorage()
+      }
+    }
   }
 
   cancelUpload(id: string) {

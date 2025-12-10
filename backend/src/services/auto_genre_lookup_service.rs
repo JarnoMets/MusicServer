@@ -79,12 +79,13 @@ pub fn start_scheduler(pool: PgPool) {
 
 /// Get one artist with "Unknown" genre and try to detect their actual genre
 async fn process_one_unknown_artist(pool: &PgPool) -> Result<(), String> {
-    // Find the first artist with "Unknown" genre (or no genre)
+    // Find the first artist with "Unknown" genre (or no genre) but NOT "NotFound"
     let artist: Option<String> = sqlx::query_scalar(
         r#"
         SELECT artist_name 
         FROM artist_genres 
-        WHERE genre = 'Unknown' OR genre IS NULL
+        WHERE (genre = 'Unknown' OR genre IS NULL)
+        AND genre != 'NotFound'
         ORDER BY created_at ASC
         LIMIT 1
         "#
@@ -107,6 +108,15 @@ async fn process_one_unknown_artist(pool: &PgPool) -> Result<(), String> {
             }
             Ok(None) => {
                 log::debug!("No genre found for artist: {}", artist_name);
+                // Mark as NotFound to avoid retrying constantly
+                if let Err(e) = sqlx::query(
+                    "UPDATE artist_genres SET genre = 'NotFound' WHERE artist_name = $1"
+                )
+                .bind(&artist_name)
+                .execute(pool)
+                .await {
+                    log::warn!("Failed to mark {} as NotFound: {}", artist_name, e);
+                }
             }
             Err(e) => {
                 log::warn!("Error detecting genre for {}: {}", artist_name, e);
