@@ -31,6 +31,9 @@ interface PlayerState {
   queue: TrackInfo[]
   currentIndex: number
   history: TrackInfo[]
+  autoplay: boolean
+  shuffle: boolean
+  repeat: 'off' | 'all' | 'one'
 }
 
 const state = reactive<PlayerState>({
@@ -41,6 +44,9 @@ const state = reactive<PlayerState>({
   queue: [],
   currentIndex: -1,
   history: [],
+  autoplay: true,
+  shuffle: false,
+  repeat: 'off',
 })
 
 const buildStreamUrl = (musicId: string) => {
@@ -198,7 +204,34 @@ const playNextTrack = () => {
     state.audioUrl = buildStreamUrl(nextTrack.id)
     state.updatedAt = Date.now()
     state.isPlaying = true
+  } else if (state.repeat === 'all' && state.queue.length > 0) {
+    // Loop back to beginning when repeat is enabled
+    state.currentIndex = 0
+    const nextTrack = state.queue[0]
+    state.currentSource = {
+      type: 'local',
+      id: nextTrack.id,
+      title: nextTrack.title,
+      artist: nextTrack.artist,
+    }
+    state.audioUrl = buildStreamUrl(nextTrack.id)
+    state.updatedAt = Date.now()
+    state.isPlaying = true
   }
+}
+
+const toggleAutoplay = () => {
+  state.autoplay = !state.autoplay
+}
+
+const toggleShuffle = () => {
+  state.shuffle = !state.shuffle
+}
+
+const cycleRepeat = () => {
+  const modes: Array<'off' | 'all' | 'one'> = ['off', 'all', 'one']
+  const currentIndex = modes.indexOf(state.repeat)
+  state.repeat = modes[(currentIndex + 1) % modes.length]
 }
 
 export const usePlayer = () => {
@@ -215,5 +248,8 @@ export const usePlayer = () => {
     hasNextTrack,
     playPreviousTrack,
     playNextTrack,
+    toggleAutoplay,
+    toggleShuffle,
+    cycleRepeat,
   }
 }

@@ -1,15 +1,20 @@
 <template>
   <Transition name="float-in">
-    <div v-if="isVisible" class="upload-tracker-floating">
+    <div v-if="isVisible" class="upload-tracker-floating" :style="{ left: position.x + 'px', top: position.y + 'px' }">
       <div class="tracker-container">
-        <div class="tracker-header">
+        <div class="tracker-header" @mousedown="startDrag">
           <div class="tracker-title">
             <Icon name="upload" :size="16" class="tracker-icon" />
             <span>Uploading</span>
           </div>
-          <button class="close-btn" @click="toggleMinimize" :title="isMinimized ? 'Expand' : 'Collapse'">
-            <Icon :name="isMinimized ? 'chevron-up' : 'chevron-down'" :size="16" />
-          </button>
+          <div class="header-controls">
+            <button class="close-btn" @click="toggleMinimize" :title="isMinimized ? 'Expand' : 'Collapse'">
+              <Icon :name="isMinimized ? 'chevron-up' : 'chevron-down'" :size="16" />
+            </button>
+            <button class="close-btn" @click="close" title="Close">
+              <Icon name="x" :size="16" />
+            </button>
+          </div>
         </div>
 
         <div v-if="!isMinimized" class="tracker-content">
@@ -39,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useUploadManager } from '../composables/useUploadManager'
 import Icon from '../shared/components/Icons.vue'
@@ -55,22 +60,71 @@ const {
 } = useUploadManager()
 
 const isMinimized = ref(false)
+const position = ref({ x: 24, y: -1 })
+const isDragging = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
 
 const isVisible = computed(() => totalCount.value > 0)
 
 function toggleMinimize() {
   isMinimized.value = !isMinimized.value
 }
+
+function close() {
+  // We can't truly close it since it's controlled by totalCount
+  // But we can minimize it instead
+  isMinimized.value = true
+}
+
+function startDrag(event: MouseEvent) {
+  isDragging.value = true
+  dragOffset.value = {
+    x: event.clientX - position.value.x,
+    y: event.clientY - position.value.y,
+  }
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isDragging.value) return
+
+    let newX = e.clientX - dragOffset.value.x
+    let newY = e.clientY - dragOffset.value.y
+
+    // Constrain to viewport
+    const maxX = window.innerWidth - 320
+    const maxY = window.innerHeight - 100
+
+    newX = Math.max(0, Math.min(newX, maxX))
+    newY = Math.max(64, Math.min(newY, maxY))
+
+    position.value = { x: newX, y: newY }
+  }
+
+  const handleMouseUp = () => {
+    isDragging.value = false
+    document.removeEventListener('mousemove', handleMouseMove)
+    document.removeEventListener('mouseup', handleMouseUp)
+  }
+
+  document.addEventListener('mousemove', handleMouseMove)
+  document.addEventListener('mouseup', handleMouseUp)
+}
+
+onMounted(() => {
+  // Set initial position to bottom-right, but above the player
+  position.value = {
+    x: window.innerWidth - 344,
+    y: window.innerHeight - 250,
+  }
+})
 </script>
 
 <style scoped>
 .upload-tracker-floating {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
   z-index: 999;
   max-width: 320px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  user-select: none;
 }
 
 .tracker-container {
@@ -90,6 +144,7 @@ function toggleMinimize() {
   color: white;
   font-weight: 600;
   font-size: 13px;
+  cursor: move;
 }
 
 .tracker-title {
@@ -100,6 +155,11 @@ function toggleMinimize() {
 
 .tracker-icon {
   opacity: 0.9;
+}
+
+.header-controls {
+  display: flex;
+  gap: 6px;
 }
 
 .close-btn {
@@ -226,18 +286,16 @@ function toggleMinimize() {
 
 .float-in-enter-from {
   opacity: 0;
-  transform: translateY(30px) translateX(30px);
+  transform: scale(0.95);
 }
 
 .float-in-leave-to {
   opacity: 0;
-  transform: translateY(30px) translateX(30px);
+  transform: scale(0.95);
 }
 
 @media (max-width: 640px) {
   .upload-tracker-floating {
-    bottom: 16px;
-    right: 16px;
     max-width: 280px;
   }
 }

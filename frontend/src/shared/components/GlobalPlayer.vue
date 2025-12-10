@@ -96,6 +96,34 @@
         </div>
         <span class="time-display">{{ formatTime(duration) }}</span>
       </div>
+
+      <div class="player-options">
+        <button
+          class="option-btn"
+          :class="{ active: state.autoplay }"
+          @click="toggleAutoplay"
+          title="Toggle autoplay"
+        >
+          <Icon name="play-circle" :size="16" />
+        </button>
+        <button
+          class="option-btn"
+          :class="{ active: state.shuffle }"
+          @click="toggleShuffle"
+          title="Toggle shuffle"
+        >
+          <Icon name="shuffle" :size="16" />
+        </button>
+        <button
+          class="option-btn"
+          :class="{ active: state.repeat !== 'off', 'repeat-one': state.repeat === 'one' }"
+          @click="cycleRepeat"
+          title="Cycle repeat mode"
+        >
+          <Icon name="repeat" :size="16" />
+          <span v-if="state.repeat === 'one'" class="repeat-indicator">1</span>
+        </button>
+      </div>
     </div>
 
     <!-- Volume Controls -->
@@ -128,7 +156,7 @@ import { usePlayer } from '../../composables/usePlayer'
 import { useToast } from '../../composables/useToast'
 import Icon from './Icons.vue'
 
-const { state, stopPlayback: stop, setPlayingStatus, playPreviousTrack, playNextTrack, hasPreviousTrack, hasNextTrack } = usePlayer()
+const { state, stopPlayback: stop, setPlayingStatus, playPreviousTrack, playNextTrack, hasPreviousTrack, hasNextTrack, toggleAutoplay, toggleShuffle, cycleRepeat } = usePlayer()
 const { error } = useToast()
 
 const audioRef = ref<HTMLAudioElement | null>(null)
@@ -165,9 +193,20 @@ const handleEnded = () => {
   isPlaying.value = false
   setPlayingStatus(false)
   currentTime.value = 0
-  // Auto-play next track if available
-  if (hasNext.value) {
-    playNext()
+
+  // Handle repeat one mode
+  if (state.repeat === 'one' && state.currentSource?.type === 'local') {
+    const playPromise = audioRef.value?.play()
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.warn('Replay failed:', err)
+      })
+    }
+  } else if (state.autoplay) {
+    // Auto-play next track if autoplay is enabled
+    if (hasNext.value) {
+      playNext()
+    }
   }
 }
 
@@ -580,6 +619,59 @@ onUnmounted(() => {
 .progress-handle.visible,
 .progress-bar:hover .progress-handle {
   transform: translate(-50%, -50%) scale(1);
+}
+
+/* Player Options Section */
+.player-options {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.option-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  position: relative;
+}
+
+.option-btn:hover {
+  background: var(--surface-muted);
+  border-color: var(--border-hover);
+  color: var(--text-color);
+}
+
+.option-btn.active {
+  background: var(--primary-glow);
+  border-color: var(--primary-color);
+  color: var(--primary-light);
+}
+
+.repeat-indicator {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 700;
+  top: 6px;
+  right: 5px;
+  background: var(--primary-color);
+  color: white;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--surface-color);
 }
 
 /* Volume Controls Section */
