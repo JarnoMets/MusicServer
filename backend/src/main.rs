@@ -60,9 +60,9 @@ async fn main() -> std::io::Result<()> {
     
     // Create a shared HTTP client with connection pooling for all outgoing requests
     let http_client = reqwest::Client::builder()
-        .pool_max_idle_per_host(2)  // Limit idle connections per host
+        .pool_max_idle_per_host(4)  // Increased from 2 for better connection reuse
         .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(60))  // Increased from 30s for large file uploads
         .user_agent("MusicManager/1.0.0 (jarno.mets@gmail.com)")
         .build()
         .expect("Failed to create HTTP client");
@@ -283,6 +283,8 @@ async fn main() -> std::io::Result<()> {
             )
     })
     .bind("0.0.0.0:8081")?
+    .workers(num_cpus::get())  // Use number of CPU cores for worker threads
+    .keep_alive(std::time::Duration::from_secs(75))  // Keep-alive timeout for long uploads
     .run()
     .await
 }
