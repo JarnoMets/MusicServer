@@ -5,9 +5,31 @@
         <h2>Internet Streams</h2>
         <p class="subtitle">Add your favorite radio streams and play them directly from the player.</p>
       </div>
-      <button v-if="canEdit" class="btn btn-primary" @click="showAddForm = true">
-        <Icon name="plus" :size="16" /> Add Stream
-      </button>
+      <div class="header-actions">
+        <div class="search-box">
+          <Icon name="search" :size="16" />
+          <input 
+            v-model="searchQuery" 
+            type="text" 
+            placeholder="Search streams..."
+            @input="debouncedSearch"
+          />
+          <button v-if="searchQuery" class="clear-search" @click="clearSearch">
+            <Icon name="x" :size="14" />
+          </button>
+        </div>
+        <div class="sort-controls">
+          <select v-model="sortBy" class="sort-select">
+            <option value="name-asc">Name (A-Z)</option>
+            <option value="name-desc">Name (Z-A)</option>
+            <option value="created-desc">Newest</option>
+            <option value="created-asc">Oldest</option>
+          </select>
+        </div>
+        <button v-if="canEdit" class="btn btn-primary" @click="showAddForm = true">
+          <Icon name="plus" :size="16" /> Add Stream
+        </button>
+      </div>
     </div>
 
     <!-- Add/Edit Modal -->
@@ -89,9 +111,9 @@
     </div>
 
     <!-- Streams Grid -->
-    <div v-else-if="streams.length" class="streams-grid">
+    <div v-else-if="filteredStreams.length" class="streams-grid">
       <article 
-        v-for="stream in streams" 
+        v-for="stream in filteredStreams" 
         :key="stream.id" 
         class="stream-card"
         :class="{ 'is-playing': isStreamPlaying(stream) }"
@@ -175,6 +197,8 @@ const loading = ref(false)
 const saving = ref(false)
 const showAddForm = ref(false)
 const editingStream = ref<InternetStream | null>(null)
+const searchQuery = ref('')
+const sortBy = ref<'name-asc' | 'name-desc' | 'created-desc' | 'created-asc'>('name-asc')
 
 const formData = ref({
   name: '',
@@ -186,6 +210,44 @@ const formData = ref({
 const { playInternetStream, state: playerState } = usePlayer()
 const { success, error } = useToast()
 const { confirm } = useConfirm()
+
+const debouncedSearch = () => {
+  // Filter is reactive, no action needed
+}
+
+const clearSearch = () => {
+  searchQuery.value = ''
+}
+
+// Filter and sort streams
+const filteredStreams = computed(() => {
+  let result = streams.value
+  
+  // Apply search filter
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    result = result.filter(stream => 
+      stream.name.toLowerCase().includes(query) ||
+      (stream.description && stream.description.toLowerCase().includes(query)) ||
+      (stream.genre && stream.genre.toLowerCase().includes(query))
+    )
+  }
+  
+  // Apply sorting
+  const sorted = [...result]
+  switch (sortBy.value) {
+    case 'name-asc':
+      return sorted.sort((a, b) => a.name.localeCompare(b.name))
+    case 'name-desc':
+      return sorted.sort((a, b) => b.name.localeCompare(a.name))
+    case 'created-desc':
+      return sorted.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+    case 'created-asc':
+      return sorted.sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+    default:
+      return sorted
+  }
+})
 
 const isStreamPlaying = (stream: InternetStream) => {
   return playerState.currentSource?.type === 'stream' && 
@@ -325,6 +387,89 @@ onMounted(() => {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.9rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 250px;
+  transition: all 0.2s ease;
+}
+
+.search-box:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
+}
+
+.search-box input {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--text-color);
+  font-size: 14px;
+  outline: none;
+}
+
+.search-box input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.clear-search {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.clear-search:hover {
+  color: var(--text-color);
+  background: var(--surface-hover);
+}
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+}
+
+.sort-select {
+  padding: 10px 14px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-color);
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sort-select:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.sort-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
 }
 
 /* Buttons */
@@ -730,6 +875,24 @@ onMounted(() => {
   .header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .header-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .search-box {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .sort-controls {
+    width: 100%;
+  }
+
+  .sort-select {
+    width: 100%;
   }
 
   .form-row {

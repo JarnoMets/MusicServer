@@ -3,7 +3,7 @@
  * Uses session storage to persist upload data and allows uploads to continue even when user leaves the upload page
  */
 
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref } from 'vue'
 import { musicAPI } from '../api/music'
 
 export interface UploadItem {

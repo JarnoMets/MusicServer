@@ -5,8 +5,30 @@
         <h2>Browse by Genre</h2>
         <p class="subtitle">Explore your music collection organized by genre</p>
       </div>
-      <div class="header-stats" v-if="!loading && genres.length">
-        <span class="stat">{{ genres.length }} genres</span>
+      <div class="header-actions">
+        <div class="search-box">
+          <Icon name="search" :size="16" />
+          <input 
+            v-model="searchQuery" 
+            type="text" 
+            placeholder="Search genres..."
+            @input="debouncedSearch"
+          />
+          <button v-if="searchQuery" class="clear-search" @click="clearSearch">
+            <Icon name="x" :size="14" />
+          </button>
+        </div>
+        <div class="sort-controls">
+          <select v-model="sortBy" class="sort-select">
+            <option value="tracks-desc">Most Tracks</option>
+            <option value="tracks-asc">Least Tracks</option>
+            <option value="name-asc">Name (A-Z)</option>
+            <option value="name-desc">Name (Z-A)</option>
+          </select>
+        </div>
+      </div>
+      <div class="header-stats" v-if="!loading && filteredGenres.length">
+        <span class="stat">{{ filteredGenres.length }} genres</span>
         <span class="stat">{{ totalTracks }} tracks</span>
       </div>
     </div>
@@ -21,9 +43,9 @@
     </div>
 
     <!-- Genre Grid -->
-    <div v-else-if="genres.length" class="genre-grid">
+    <div v-else-if="filteredGenres.length" class="genre-grid">
       <button
-        v-for="genre in genres"
+        v-for="genre in filteredGenres"
         :key="genre.name"
         :class="['genre-card', { active: selectedGenre === genre.name }]"
         @click="selectGenre(genre.name)"
@@ -140,18 +162,56 @@ const genreTracks = ref<Track[]>([])
 const loading = ref(false)
 const loadingTracks = ref(false)
 const selectedGenre = ref<string | null>(null)
+const searchQuery = ref('')
+const sortBy = ref<'tracks-desc' | 'tracks-asc' | 'name-asc' | 'name-desc'>('tracks-desc')
 
 const { playLocalTrack, state: playerState } = usePlayer()
 const { error } = useToast()
 
 const totalTracks = computed(() => {
-  return genres.value.reduce((sum, g) => sum + (g.track_count || 0), 0)
+  return filteredGenres.value.reduce((sum, g) => sum + (g.track_count || 0), 0)
+})
+
+// Filter genres based on search
+const filteredGenres = computed(() => {
+  let result = genres.value
+  
+  // Apply search filter
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    result = result.filter(genre => 
+      genre.name.toLowerCase().includes(query)
+    )
+  }
+  
+  // Apply sorting
+  const sorted = [...result]
+  switch (sortBy.value) {
+    case 'tracks-desc':
+      return sorted.sort((a, b) => (b.track_count || 0) - (a.track_count || 0))
+    case 'tracks-asc':
+      return sorted.sort((a, b) => (a.track_count || 0) - (b.track_count || 0))
+    case 'name-asc':
+      return sorted.sort((a, b) => a.name.localeCompare(b.name))
+    case 'name-desc':
+      return sorted.sort((a, b) => b.name.localeCompare(a.name))
+    default:
+      return sorted
+  }
 })
 
 const isTrackPlaying = (track: Track) => {
   return playerState.currentSource?.type === 'local' &&
          playerState.currentSource?.id === track.id &&
          playerState.isPlaying
+}
+
+const debouncedSearch = () => {
+  // Filter is reactive, no action needed
+}
+
+const clearSearch = () => {
+  searchQuery.value = ''
 }
 
 const fetchGenres = async () => {
@@ -240,6 +300,89 @@ onMounted(() => {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.9rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 250px;
+  transition: all 0.2s ease;
+}
+
+.search-box:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
+}
+
+.search-box input {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--text-color);
+  font-size: 14px;
+  outline: none;
+}
+
+.search-box input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.clear-search {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.clear-search:hover {
+  color: var(--text-color);
+  background: var(--surface-hover);
+}
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+}
+
+.sort-select {
+  padding: 10px 14px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-color);
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sort-select:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.sort-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
 }
 
 .header-stats {
@@ -649,6 +792,33 @@ onMounted(() => {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+  }
+
+  .header-actions {
+    order: 2;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .header-stats {
+    order: 3;
+  }
+
+  .search-box {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .sort-controls {
+    width: 100%;
+  }
+
+  .sort-select {
+    width: 100%;
+  }
+
   .track-item {
     grid-template-columns: 40px 1fr 50px;
   }
