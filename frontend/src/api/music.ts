@@ -160,6 +160,18 @@ export const musicAPI = {
   getAutoDownloadStatus: () => api.get('/admin/auto-download/status'),
   triggerAutoDownload: () => api.post('/admin/auto-download/trigger'),
   stopAutoDownload: () => api.post('/admin/auto-download/stop'),
+
+  // Bulk operations (admin)
+  bulkRenameByRegex: (data: {
+    field: 'title' | 'artist' | 'album'
+    pattern: string
+    replacement: string
+  }) => api.post('/admin/music/bulk-rename', data),
+  bulkAddToPlaylistByRegex: (data: {
+    playlist_id: string
+    field: 'title' | 'artist' | 'album'
+    pattern: string
+  }) => api.post('/admin/music/bulk-add-to-playlist', data),
 }
 
 export default api

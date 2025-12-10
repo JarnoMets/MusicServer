@@ -9,7 +9,7 @@ pub mod youtube;
 pub use app_state::AppState;
 pub use auto_download::{AutoDownloadConfig, UpdateAutoDownloadConfigRequest};
 pub use genre::{ArtistGenre, DetectGenreRequest, DetectGenreResponse};
-pub use music::{ArtistSummary, CreateMusicFileRequest, MusicFile, MusicQueryParams, UpdateMusicFileRequest};
+pub use music::{ArtistSummary, BulkAddToPlaylistByRegexRequest, BulkAddToPlaylistResponse, BulkRenameByRegexRequest, BulkRenameResponse, CreateMusicFileRequest, MusicFile, MusicQueryParams, UpdateMusicFileRequest};
 pub use playlist::{
     CreatePlaylistRequest, Playlist, PlaylistSummary, PlaylistTrackRequest, PlaylistWithItems, UpdatePlaylistRequest,
 };

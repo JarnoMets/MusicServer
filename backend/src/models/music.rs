@@ -65,3 +65,39 @@ pub struct ArtistSummary {
     pub genre: Option<String>,
     pub song_count: i64,
 }
+
+/// Bulk rename request by regex pattern
+#[derive(Debug, Deserialize, Clone)]
+pub struct BulkRenameByRegexRequest {
+    /// Field to rename: "title", "artist", or "album"
+    pub field: String,
+    /// Regex pattern to match (e.g., "^\d+\.\s*" to match "24. " at the start)
+    pub pattern: String,
+    /// Replacement string (e.g., "" to remove the pattern, or "$1" for capture group)
+    pub replacement: String,
+}
+
+/// Response for bulk rename operation
+#[derive(Debug, Serialize, Clone)]
+pub struct BulkRenameResponse {
+    pub updated_count: i32,
+    pub updated_files: Vec<MusicFile>,
+}
+
+/// Bulk add to playlist by regex request
+#[derive(Debug, Deserialize, Clone)]
+pub struct BulkAddToPlaylistByRegexRequest {
+    /// Playlist ID to add tracks to
+    pub playlist_id: Uuid,
+    /// Field to match: "title", "artist", or "album"
+    pub field: String,
+    /// Regex pattern to match
+    pub pattern: String,
+}
+
+/// Response for bulk add to playlist operation
+#[derive(Debug, Serialize, Clone)]
+pub struct BulkAddToPlaylistResponse {
+    pub added_count: i32,
+    pub total_playlist_count: i64,
+}

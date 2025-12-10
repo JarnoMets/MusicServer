@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::models::{CreateMusicFileRequest, MusicFile, MusicQueryParams, UpdateMusicFileRequest};
+use crate::models::{BulkAddToPlaylistByRegexRequest, BulkAddToPlaylistResponse, BulkRenameByRegexRequest, BulkRenameResponse, CreateMusicFileRequest, MusicFile, MusicQueryParams, UpdateMusicFileRequest};
 use sqlx::QueryBuilder;
 use uuid::Uuid;
 
@@ -273,4 +273,204 @@ pub async fn compute_file_hash(file_path: &str) -> Result<String, std::io::Error
     
     let result = hasher.finalize();
     Ok(hex::encode(result))
+}
+
+/// Bulk rename music files by regex pattern
+pub async fn bulk_rename_by_regex(
+    db: &Database,
+    req: BulkRenameByRegexRequest,
+) -> Result<BulkRenameResponse, Box<dyn std::error::Error>> {
+    // Validate the regex pattern
+    let re = regex::Regex::new(&req.pattern)?;
+    
+    // Validate the field name
+    let field = match req.field.as_str() {
+        "title" | "artist" | "album" => req.field.as_str(),
+        _ => return Err("Invalid field. Must be 'title', 'artist', or 'album'".into()),
+    };
+    
+    // Get all music files
+    let all_music = sqlx::query_as::<_, MusicFile>(
+        "SELECT id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at FROM music_files ORDER BY title"
+    )
+    .fetch_all(&db.pool)
+    .await?;
+    
+    let mut updated_files = Vec::new();
+    
+    // Process each file
+    for music_file in all_music {
+        let old_value = match field {
+            "title" => music_file.title.clone(),
+            "artist" => music_file.artist.clone().unwrap_or_default(),
+            "album" => music_file.album.clone().unwrap_or_default(),
+            _ => continue,
+        };
+        
+        // Check if the regex matches
+        if !re.is_match(&old_value) {
+            continue;
+        }
+        
+        // Apply the replacement
+        let new_value = re.replace(&old_value, req.replacement.as_str()).to_string();
+        
+        // Skip if the value hasn't changed
+        if new_value == old_value {
+            continue;
+        }
+        
+        // Update the field in the database
+        let updated = match field {
+            "title" => {
+                sqlx::query_as::<_, MusicFile>(
+                    "UPDATE music_files SET title = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at"
+                )
+                .bind(&new_value)
+                .bind(music_file.id)
+                .fetch_one(&db.pool)
+                .await?
+            },
+            "artist" => {
+                sqlx::query_as::<_, MusicFile>(
+                    "UPDATE music_files SET artist = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at"
+                )
+                .bind(if new_value.is_empty() { None } else { Some(&new_value) })
+                .bind(music_file.id)
+                .fetch_one(&db.pool)
+                .await?
+            },
+            "album" => {
+                sqlx::query_as::<_, MusicFile>(
+                    "UPDATE music_files SET album = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at"
+                )
+                .bind(if new_value.is_empty() { None } else { Some(&new_value) })
+                .bind(music_file.id)
+                .fetch_one(&db.pool)
+                .await?
+            },
+            _ => continue,
+        };
+        
+        updated_files.push(updated);
+    }
+    
+    let updated_count = updated_files.len() as i32;
+    
+    Ok(BulkRenameResponse {
+        updated_count,
+        updated_files,
+    })
+}
+
+/// Bulk add music files to a playlist by regex pattern
+pub async fn bulk_add_to_playlist_by_regex(
+    db: &Database,
+    req: BulkAddToPlaylistByRegexRequest,
+) -> Result<BulkAddToPlaylistResponse, Box<dyn std::error::Error>> {
+    // Validate the regex pattern
+    let re = regex::Regex::new(&req.pattern)?;
+    
+    // Validate the field name
+    let field = match req.field.as_str() {
+        "title" | "artist" | "album" => req.field.as_str(),
+        _ => return Err("Invalid field. Must be 'title', 'artist', or 'album'".into()),
+    };
+    
+    // Verify the playlist exists
+    let playlist_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM playlists WHERE id = $1)"
+    )
+    .bind(req.playlist_id)
+    .fetch_one(&db.pool)
+    .await?;
+    
+    if !playlist_exists {
+        return Err("Playlist not found".into());
+    }
+    
+    // Get all music files that match the pattern
+    let all_music = sqlx::query_as::<_, MusicFile>(
+        "SELECT id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at FROM music_files ORDER BY title"
+    )
+    .fetch_all(&db.pool)
+    .await?;
+    
+    let mut added_count = 0;
+    
+    // Process each file
+    for music_file in all_music {
+        let value = match field {
+            "title" => &music_file.title,
+            "artist" => {
+                if let Some(ref artist) = music_file.artist {
+                    artist
+                } else {
+                    continue;
+                }
+            },
+            "album" => {
+                if let Some(ref album) = music_file.album {
+                    album
+                } else {
+                    continue;
+                }
+            },
+            _ => continue,
+        };
+        
+        // Check if the regex matches
+        if !re.is_match(value) {
+            continue;
+        }
+        
+        // Check if the track is already in the playlist
+        let already_in_playlist: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id = $1 AND music_file_id = $2)"
+        )
+        .bind(req.playlist_id)
+        .bind(music_file.id)
+        .fetch_one(&db.pool)
+        .await?;
+        
+        if already_in_playlist {
+            continue;
+        }
+        
+        // Get the next position
+        let max_position: Option<i32> = sqlx::query_scalar(
+            "SELECT MAX(position) FROM playlist_items WHERE playlist_id = $1"
+        )
+        .bind(req.playlist_id)
+        .fetch_one(&db.pool)
+        .await?;
+        
+        let position = max_position.unwrap_or(0) + 1;
+        
+        // Add the track to the playlist
+        sqlx::query(
+            "INSERT INTO playlist_items (id, playlist_id, music_file_id, position, created_at) VALUES ($1, $2, $3, $4, NOW())"
+        )
+        .bind(Uuid::new_v4())
+        .bind(req.playlist_id)
+        .bind(music_file.id)
+        .bind(position)
+        .execute(&db.pool)
+        .await?;
+        
+        added_count += 1;
+    }
+    
+    // Get the total track count for the playlist
+    let total_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM playlist_items WHERE playlist_id = $1"
+    )
+    .bind(req.playlist_id)
+    .fetch_one(&db.pool)
+    .await?;
+    
+    Ok(BulkAddToPlaylistResponse {
+        added_count,
+        total_playlist_count: total_count,
+    })
 }

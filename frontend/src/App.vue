@@ -41,6 +41,10 @@
                 <Icon name="download" :size="16" />
                 <span>YouTube Downloader</span>
               </router-link>
+              <router-link to="/admin/bulk-operations" class="dropdown-item" @click="showAdminMenu = false">
+                <Icon name="zap" :size="16" />
+                <span>Bulk Operations</span>
+              </router-link>
               <div class="dropdown-separator"></div>
               <button class="dropdown-item logout" @click="handleLogout">
                 <Icon name="log-out" :size="16" />
