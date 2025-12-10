@@ -418,6 +418,7 @@ pub async fn upload_music_files(
     let db = state.db.clone();
     let mut inserted = Vec::new();
     let mut errors = Vec::new();
+    let mut files_to_cleanup = Vec::new(); // Track files for cleanup on failure
 
     while let Some(field) = payload.next().await {
         match field {
@@ -429,21 +430,35 @@ pub async fn upload_music_files(
                     .unwrap_or_else(|| format!("upload-{}", chrono::Utc::now().timestamp()));
 
                 let filepath = Path::new(&upload_root).join(&filename);
+                
+                // Track the file for potential cleanup
+                files_to_cleanup.push(filepath.clone());
+                
                 match File::create(&filepath).await {
                     Ok(mut file) => {
+                        let mut write_failed = false;
                         while let Some(chunk) = field.next().await {
                             match chunk {
                                 Ok(bytes) => {
                                     if let Err(e) = file.write_all(&bytes).await {
                                         errors.push(format!("Failed to write {}: {}", filename, e));
+                                        write_failed = true;
                                         break;
                                     }
                                 }
                                 Err(e) => {
                                     errors.push(format!("Chunk error for {}: {}", filename, e));
+                                    write_failed = true;
                                     break;
                                 }
                             }
+                        }
+
+                        // If write failed, clean up the incomplete file and continue
+                        if write_failed {
+                            let _ = tokio::fs::remove_file(&filepath).await;
+                            files_to_cleanup.pop(); // Don't need to track this anymore
+                            continue;
                         }
 
                         // Extract metadata from the uploaded file using lofty
@@ -520,6 +535,7 @@ pub async fn upload_music_files(
                                 Ok(true) => {
                                     // File is a duplicate - delete the uploaded file and skip
                                     let _ = tokio::fs::remove_file(&filepath).await;
+                                    files_to_cleanup.pop(); // Remove from tracking
                                     errors.push(format!("Duplicate file skipped: {} (same content already exists)", filename));
                                     continue;
                                 }
@@ -557,14 +573,21 @@ pub async fn upload_music_files(
                                     log::warn!("Failed to ensure artists exist: {}", e);
                                 }
                                 
+                                // File was successfully inserted - remove from cleanup list
+                                files_to_cleanup.pop();
                                 inserted.push(record);
                             }
                             Err(e) => {
+                                // DB insert failed - clean up the file
+                                let _ = tokio::fs::remove_file(&filepath).await;
+                                files_to_cleanup.pop();
                                 errors.push(format!("DB insert failed for {}: {}", filename, e));
+                                log::warn!("Cleaned up file {} due to DB insert failure", filename);
                             }
                         }
                     }
                     Err(e) => {
+                        files_to_cleanup.pop();
                         errors.push(format!(
                             "Failed to create file {}: {}",
                             filepath.display(),
@@ -574,6 +597,14 @@ pub async fn upload_music_files(
                 }
             }
             Err(e) => errors.push(format!("Upload field error: {}", e)),
+        }
+    }
+
+    // Clean up any remaining tracked files (shouldn't happen in normal operation)
+    for filepath in files_to_cleanup {
+        if filepath.exists() {
+            let _ = std::fs::remove_file(&filepath);
+            log::warn!("Cleaned up leftover file: {}", filepath.display());
         }
     }
 
