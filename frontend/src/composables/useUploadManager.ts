@@ -14,12 +14,6 @@ export interface UploadItem {
   message?: string
 }
 
-interface UploadManagerState {
-  uploads: UploadItem[]
-  uploading: boolean
-  isInitialized: boolean
-}
-
 // Singleton state
 let uploadManagerInstance: UploadManager | null = null
 
@@ -43,15 +37,22 @@ class UploadManager {
     try {
       const stored = sessionStorage.getItem(this.getSessionStorageKey())
       if (stored) {
-        const state = JSON.parse(stored) as Omit<UploadManagerState, 'isInitialized'>
+        const state = JSON.parse(stored) as { uploads: Array<Omit<UploadItem, 'file'>>; uploading: boolean }
         // Don't restore files since File objects can't be serialized
         // Only restore completed/successful uploads, not queued or in-progress ones
         // since we can't actually re-upload without the file
-        this.uploads.value = state.uploads.filter((item) => item.status === 'success')
+        this.uploads.value = state.uploads.map((s) => ({
+          id: s.id,
+          file: new File([], 'unknown'), // placeholder - we won't use the file
+          progress: s.progress,
+          status: s.status,
+          message: s.message,
+        })).filter((item) => item.status === 'success')
         this.uploading.value = false // Never restore uploading state
       }
     } catch (e) {
-      console.warn('Failed to load upload state from session storage:', e)
+      const err = e as unknown
+      console.warn('Failed to load upload state from session storage:', err)
     }
     this.isInitialized.value = true
   }
@@ -59,16 +60,19 @@ class UploadManager {
   private saveToSessionStorage() {
     try {
       // Only serialize metadata, not File objects
-      const state: Omit<UploadManagerState, 'isInitialized'> = {
+      const state: { uploads: Array<Omit<UploadItem, 'file'>>; uploading: boolean } = {
         uploads: this.uploads.value.map((item) => ({
-          ...item,
-          file: undefined as any, // Don't serialize File objects
+          id: item.id,
+          progress: item.progress,
+          status: item.status,
+          message: item.message,
         })),
         uploading: this.uploading.value,
       }
       sessionStorage.setItem(this.getSessionStorageKey(), JSON.stringify(state))
     } catch (e) {
-      console.warn('Failed to save upload state to session storage:', e)
+      const err = e as unknown
+      console.warn('Failed to save upload state to session storage:', err)
     }
   }
 
@@ -287,13 +291,18 @@ class UploadManager {
         const inserted = response.data?.inserted as Array<{ title?: string }> | undefined
         item.message = inserted?.[0]?.title ? `Added ${inserted[0].title}` : 'Uploaded successfully'
       }
-    } catch (error: any) {
+    } catch (err: unknown) {
+      const error = err as {
+        name?: string
+        response?: { status?: number; data?: { error?: string } }
+        message?: string
+      }
       if (error.name === 'AbortError') {
         // Upload was cancelled
         item.status = 'error'
         item.message = 'Upload cancelled'
       } else {
-        const status = error?.response?.status
+        const status = error.response?.status
         // Collect 502/503 errors for retry
         if (status === 502 || status === 503) {
           item.status = 'error'
@@ -301,7 +310,7 @@ class UploadManager {
           retryItems.push(item)
         } else {
           item.status = 'error'
-          item.message = error?.response?.data?.error || error?.message || 'Upload failed'
+          item.message = error.response?.data?.error || error.message || 'Upload failed'
         }
       }
     } finally {
@@ -356,15 +365,16 @@ class UploadManager {
             const inserted = response.data?.inserted as Array<{ title?: string }> | undefined
             item.message = inserted?.[0]?.title ? `Added ${inserted[0].title}` : 'Uploaded successfully'
           }
-        } catch (error: any) {
-          const status = error?.response?.status
+        } catch (err: unknown) {
+          const error = err as { response?: { status?: number; data?: { error?: string } }; message?: string }
+          const status = error.response?.status
           if (status === 502 || status === 503) {
             // Still getting server error, retry again
             stillNeedRetry.push(item)
           } else {
             // Different error, don't retry
             item.status = 'error'
-            item.message = error?.response?.data?.error || error?.message || 'Upload failed'
+            item.message = error.response?.data?.error || error.message || 'Upload failed'
           }
         } finally {
           this.abortControllers.delete(item.id)

@@ -1,129 +1,224 @@
-# Music Server
+# MusicServer – Self-Hosted Music Management & Streaming
 
-A web-based music management and streaming application built with:
+A self-hosted music library, streaming server, and DJ toolset built for personal use. Upload and organise your tracks, manage playlists, stream directly in the browser, download from YouTube, and maintain a clean genre/artist taxonomy.
 
-- **Backend**: Rust with Actix-web framework
-- **Frontend**: Vue 3 with TypeScript and Vite
-- **Database**: PostgreSQL
-- **Deployment**: Docker + Kubernetes
+## Features
+
+### Library Management
+- Upload audio files (MP3, FLAC, AAC, WAV, OGG, M4A) — up to 500 MB per request
+- Automatic metadata extraction from file tags (title, artist, album, year, BPM, key)
+- Duplicate detection via streaming SHA-256 hash before upload
+- File sync from a mounted `/music` directory
+- Bulk rename / bulk-add-to-playlist via regex
+
+### Streaming & Playback
+- In-browser waveform player powered by WaveSurfer.js
+- Audio cutting / trimming endpoint
+- HTTP range-request streaming with configurable keep-alive
+- Internet radio stream management
+
+### Playlists
+- Create, reorder, and export playlists
+- Export as ZIP archive or Rekordbox XML
+- YouTube playlist tracking (auto-sync downloads)
+
+### YouTube Downloader
+- Download single videos or full playlists via `yt-dlp`
+- Real-time progress via Server-Sent Events
+- Auto-download scheduler with configurable rules
+
+### Genre & Metadata System
+- Canonical genre taxonomy with aliases and backfill
+- Per-artist genre assignment with auto-lookup scheduler
+- Discogs-based metadata enrichment (release year, album, style)
+- Metadata suggestion queue with accept/reject workflow
+- BPM detection (aubio)
+- Key detection (Rekordbox-compatible analysis)
+
+### Authentication
+- Google OAuth SSO (mobile + web flows)
+- JWT session management
+- Admin token for protected admin endpoints (SHA-256 stored, constant-time compare)
+
+### Admin
+- Audit log with revert support
+- Artist renaming (propagates to all tracks)
+- Genre merge, alias, and reprocess operations
+- Auto-download configuration and manual trigger
+- Bulk metadata operations
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Rust · Actix-web 4 · SQLx |
+| Database | PostgreSQL 15 |
+| Frontend | Vue 3 · TypeScript · Vite · WaveSurfer.js · Pinia · vue-i18n |
+| Audio analysis | aubio (BPM) · symphonia (decoding) · rustfft |
+| Deployment | Docker Compose / Kubernetes (k3s) |
 
 ## Quick Start
 
-### Development
+### Local development
 
-Install dependencies and start the development server:
-
-\`\`\`bash
-# Backend + Frontend development servers
+```bash
 ./dev.sh
+```
 
-# Or with docker-compose
-docker-compose up
-\`\`\`
-
-Access the application at:
+- Backend: http://localhost:8081
 - Frontend: http://localhost:5173
-- Backend API: http://localhost:8081/api
 
-### Docker Deployment
+### Docker Compose
 
-Build and run with Docker Compose:
-
-\`\`\`bash
+```bash
 docker-compose up --build
-\`\`\`
+```
 
-Access at http://localhost:3001
+### Kubernetes (k3s)
 
-### Kubernetes Deployment
-
-Deploy to your k3s cluster:
-
-\`\`\`bash
+```bash
 make deploy
-\`\`\`
+```
 
-**Note:** MusicServer shares the PostgreSQL instance from the Card Scorer project (in the `postgres` namespace).
+> **Note:** The Kubernetes deployment mounts a persistent volume at `/music` for audio files. Make sure the PVC is provisioned before deploying.
 
 ## Project Structure
 
-- `backend/` - Rust Actix-web API
-  - `src/` - Source code
-  - `Dockerfile` - Container image
-- `frontend/` - Vue 3 TypeScript app
-  - `src/` - Vue components and logic
-  - `Dockerfile` - Nginx container
-- `k8s/` - Kubernetes manifests
-- `docker-compose.yaml` - Local development compose file
+```
+MusicServer/
+├── backend/                    # Rust Actix-web API
+│   ├── src/
+│   │   ├── db/                 # Database layer & schema migrations
+│   │   ├── models/             # Data models
+│   │   ├── services/           # Business logic
+│   │   │   ├── bpm_service.rs
+│   │   │   ├── discogs_service.rs
+│   │   │   ├── genre_detection.rs
+│   │   │   ├── auto_download_service.rs
+│   │   │   ├── auto_genre_lookup_service.rs
+│   │   │   ├── auto_metadata_lookup_service.rs
+│   │   │   ├── playlist_export_service.rs
+│   │   │   ├── rekordbox_service.rs
+│   │   │   ├── yt_download_service.rs
+│   │   │   └── …
+│   │   ├── routes.rs           # All HTTP route handlers
+│   │   ├── auth_routes.rs      # Google OAuth + JWT routes
+│   │   ├── audit_routes.rs     # Audit log routes
+│   │   ├── auth_middleware.rs  # JWT auth middleware
+│   │   ├── admin_middleware.rs # Admin token middleware
+│   │   ├── yt_downloader.rs    # yt-dlp wrapper
+│   │   └── main.rs
+│   └── Cargo.toml
+├── frontend/                   # Vue 3 SPA
+│   ├── src/
+│   │   ├── views/              # Browse, Upload, EditTrack, Login
+│   │   ├── features/           # Feature modules (music, playlists, genres, artists, decks, …)
+│   │   ├── components/         # Shared UI components
+│   │   ├── stores/             # Pinia stores
+│   │   ├── api/                # Typed API client
+│   │   ├── locales/            # i18n (EN / NL)
+│   │   └── router/
+│   └── package.json
+├── k8s/                        # Kubernetes manifests
+├── docker-compose.yaml
+├── Makefile
+├── dev.sh
+└── deploy.sh
+```
 
-## Available Commands
+## API Overview
 
-- \`make dev\` - Run development environment
-- \`make build-images\` - Build Docker images
-- \`make deploy\` - Deploy to k3s
-- \`make clean\` - Clean up k8s resources
-- \`./deploy.sh\` - Build and push to Docker Hub
+### Authentication
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/auth/google/url` | Get Google OAuth URL |
+| POST | `/api/auth/google/callback` | Exchange code for JWT |
+| POST | `/api/auth/google/mobile` | Mobile OAuth flow |
+| GET | `/api/me` | Current user |
+
+### Music
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/music` | List tracks (paginated, filterable) |
+| GET | `/api/music/all-cached` | All tracks from cache |
+| POST | `/api/music/upload` | Upload audio files |
+| GET | `/api/music/:id/stream` | Stream audio (range requests) |
+| POST | `/api/music/:id/bpm-detect` | Run BPM detection |
+| POST | `/api/music/sync` | Sync from `/music` directory |
+
+### Playlists
+| Method | Path | Description |
+|---|---|---|
+| GET/POST | `/api/playlists` | List / create playlists |
+| GET | `/api/playlists/:id/export/zip` | Export as ZIP |
+| GET | `/api/playlists/:id/export/rekordbox` | Export as Rekordbox XML |
+
+### YouTube
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/youtube/download` | Start a download |
+| GET | `/api/youtube/stream/:id` | SSE progress stream |
+
+### Admin (requires admin token)
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/admin/genres` | Create genre |
+| POST | `/api/admin/genres/aliases/backfill` | Add alias & backfill |
+| PUT | `/api/admin/metadata/config` | Update Discogs config |
+| GET | `/api/admin/audit/logs` | View audit log |
+| POST | `/api/admin/music/bulk-rename` | Bulk rename by regex |
 
 ## Environment Variables
 
 ### Backend
-- \`DATABASE_URL\` - PostgreSQL connection string
-- \`RUST_LOG\` - Log level (default: info)
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | local postgres | PostgreSQL connection string |
+| `JWT_SECRET` | *(insecure default)* | JWT signing secret — **change in production** |
+| `GOOGLE_CLIENT_ID` | – | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | – | Google OAuth client secret |
+| `APP_URL` | `http://localhost:8081` | Base URL for OAuth callbacks |
+| `ADMIN_TOKEN_SHA256` | – | SHA-256 hex of the admin raw token |
+| `DISCOGS_TOKEN` | – | Discogs personal access token (optional) |
+| `RUST_LOG` | `warn` | Log level |
+| `RUN_MIGRATIONS` | `true` | Set to `false` to skip DB migrations at startup |
 
 ### Frontend
-- \`VITE_API_URL\` - Backend API URL (default: http://localhost:8081/api)
 
-## Features
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_API_URL` | `http://localhost:8081/api` | Backend API base URL |
 
-- Playlist management
-- Music file management
-- RESTful API
-- Responsive web UI
-- Internationalization (English, Dutch)
+## Admin Token
 
+The admin token protects genre management, backfill, bulk-operation, and audit endpoints. The server stores only the SHA-256 of the raw token; the raw token is never persisted.
 
-## Admin token (rotation & verification)
-
-This service protects admin-only endpoints (genre creation, aliasing, backfills and reprocessing) with a shared secret token. The server does not store the raw token — instead you store the SHA-256 hex of the raw token in the environment variable `ADMIN_TOKEN_SHA256` (recommended: managed as a Kubernetes Secret).
-
-How it works:
-- The server prefers the standard `Authorization: Bearer <raw-token>` header. For compatibility the legacy `x-admin-token: <raw-token>` header is also accepted.
-- The server computes SHA-256 of the provided raw token and performs a constant-time comparison with the value in `ADMIN_TOKEN_SHA256`.
-
-Rotation steps (Kubernetes):
-1. Generate a new raw token and compute its SHA-256 hex:
-  ```bash
-  # Example: generate a 32-byte random token and its sha256
-  RAW_TOKEN=$(head -c 32 /dev/urandom | base64)
-  echo $RAW_TOKEN
-  echo -n "$RAW_TOKEN" | sha256sum | awk '{print $1}'
-  ```
-2. Update the k8s Secret (namespace `music`) with the new SHA256 hex:
-  ```bash
-  kubectl create secret generic music-admin \
-    --namespace music \
-    --from-literal=ADMIN_TOKEN_SHA256='<sha256-hex>' \
-    --dry-run=client -o yaml | kubectl apply -f -
-  ```
-3. Restart the backend deployment so pods pick up the new env var:
-  ```bash
-  kubectl rollout restart deployment/backend -n music
-  ```
-
-Clients should be updated to use the new raw token. Because the server uses only the SHA256 stored in the secret, you can rotate tokens safely and centrally.
-
-Example curl with Authorization header:
+**Generate a token:**
 ```bash
-curl -X POST https://your-backend/api/admin/genres \
-  -H "Authorization: Bearer <RAW_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Electronic","description":"Electronic music"}'
+RAW_TOKEN=$(head -c 32 /dev/urandom | base64)
+echo "Raw token: $RAW_TOKEN"
+echo -n "$RAW_TOKEN" | sha256sum | awk '{print $1}'
 ```
 
-## Database migrations
+**Set the Kubernetes secret:**
+```bash
+kubectl create secret generic music-admin \
+  --namespace music \
+  --from-literal=ADMIN_TOKEN_SHA256='<sha256-hex>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deployment/backend -n music
+```
 
-The backend automatically creates the database if it does not exist and runs programmatic Rust migrations at startup (see `backend/src/db/schema.rs`). Make sure the Kubernetes `DATABASE_URL` has a user with permission to create databases and apply schema changes. The backend logs will show migration progress; the logs typically record when migrations start and complete.
+**Use in API calls:**
+```bash
+curl -H "Authorization: Bearer $RAW_TOKEN" https://music.example.com/api/admin/genres
+```
 
-If your DB is managed (or you prefer migrations to be applied by a separate job), you can disable the programmatic migrations in the backend using the environment variable `RUN_MIGRATIONS=false`. This will prevent the backend from altering the DB schema at startup, allowing an administrator to run migrations in a controlled manner.
+## Database Migrations
 
-Because migrations are compiled into the backend binary now, you no longer need to add SQL files to `backend/migrations`. Instead, add/modify migrations programmatically in `backend/src/db/schema.rs` and ensure your Kubernetes or Docker deployments run the new binary.
+Migrations are compiled into the binary and run automatically at startup via `backend/src/db/schema.rs`. Set `RUN_MIGRATIONS=false` to skip if you manage migrations separately.
+
+## License
+
+MIT

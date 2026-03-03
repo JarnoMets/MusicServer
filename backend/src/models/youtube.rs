@@ -20,8 +20,11 @@ pub struct YoutubeDownloadResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct YoutubeDownloadStats {
-    pub total_downloaded: i64,
+    pub total_downloads: i64,
+    pub unique_videos: i64,
+    pub total_size: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

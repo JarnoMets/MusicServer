@@ -1,29 +1,34 @@
 <template>
   <div class="browse-view">
-    <!-- Tab Navigation -->
-    <nav class="tab-navigation">
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        :class="['tab-button', { active: tab.id === activeTabId }]"
-        @click="activeTabId = tab.id"
-      >
-        <Icon :name="tab.icon" :size="18" />
-        <span class="tab-label">{{ tab.label }}</span>
-      </button>
-    </nav>
+    <header class="browse-header">
+      <div class="header-content">
+        <h1 v-if="activeTabId === 'music'">Library</h1>
+        <h1 v-else-if="activeTabId === 'artists'">Artists</h1>
+        <h1 v-else-if="activeTabId === 'playlists'">Playlists</h1>
+        <h1 v-else-if="activeTabId === 'genres'">Genres</h1>
+        <h1 v-else-if="activeTabId === 'streams'">Radio Streams</h1>
+      </div>
+      
+      <nav class="tab-navigation">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          :class="['tab-pill', { active: tab.id === activeTabId }]"
+          @click="activeTabId = tab.id"
+        >
+          <span class="tab-label">{{ tab.label }}</span>
+        </button>
+      </nav>
+    </header>
 
-    <!-- Tab Content -->
     <section class="tab-content">
-      <Transition name="fade" mode="out-in">
-        <keep-alive>
-          <component 
-            :is="activeTab?.component" 
-            :key="activeTabId"
-            :can-edit="isLoggedIn"
-          />
-        </keep-alive>
-      </Transition>
+      <keep-alive>
+        <component 
+          :is="activeTab?.component" 
+          :key="activeTabId"
+          :can-edit="isLoggedIn"
+        />
+      </keep-alive>
     </section>
   </div>
 </template>
@@ -35,7 +40,6 @@ import ArtistsTab from '../features/artists/ArtistsTab.vue'
 import PlaylistsTab from '../features/playlists/PlaylistsTab.vue'
 import GenresTab from '../features/genres/GenresTab.vue'
 import StreamsTab from '../features/streams/StreamsTab.vue'
-import Icon from '../shared/components/Icons.vue'
 import { useAuth } from '../composables/useAuth'
 
 const { isLoggedIn } = useAuth()
@@ -63,52 +67,47 @@ const activeTab = computed(() => tabs.find((tab) => tab.id === activeTabId.value
 .browse-view {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 32px;
 }
 
-/* Tab Navigation */
+.browse-header {
+  margin-bottom: 8px;
+}
+
+.header-content h1 {
+  font-size: 3rem;
+  font-weight: 800;
+  margin-bottom: 24px;
+}
+
+/* Spotify-style Tab Pills */
 .tab-navigation {
   display: flex;
-  gap: 6px;
-  padding: 6px;
-  background: var(--surface-color);
-  border-radius: 12px;
-  overflow-x: auto;
-}
-
-.tab-navigation::-webkit-scrollbar {
-  height: 0;
-}
-
-.tab-button {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  padding: 10px 20px;
-  background: transparent;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.tab-pill {
+  padding: 8px 16px;
+  background: var(--spotify-grey);
   border: none;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  font-weight: 500;
-  font-size: 14px;
+  border-radius: 50px;
+  color: white;
+  font-weight: 600;
+  font-size: 0.875rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.2s;
   white-space: nowrap;
 }
 
-.tab-button:hover:not(.active) {
-  color: var(--text-color);
-  background: var(--background-elevated);
+.tab-pill:hover:not(.active) {
+  background: #333333;
 }
 
-.tab-button.active {
-  background: var(--primary-color);
-  color: #fff;
-}
-
-.tab-label {
-  font-size: 14px;
-  font-weight: 500;
+.tab-pill.active {
+  background: white;
+  color: black;
 }
 
 /* Tab Content */

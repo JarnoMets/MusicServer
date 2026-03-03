@@ -27,6 +27,7 @@ pub struct SyncProgress {
 
 #[derive(Debug, Clone)]
 pub struct SyncSession {
+    #[allow(dead_code)]
     pub id: String,
     pub cancelled: Arc<AtomicBool>,
     pub progress: Arc<RwLock<SyncProgress>>,
@@ -78,55 +79,19 @@ struct FileRow {
     file_path: String,
 }
 
-/// Extract metadata from a file path
-async fn extract_metadata(path: &PathBuf) -> (Option<String>, Option<String>, Option<String>, Option<i32>, Option<i32>, Option<i32>) {
-    let path_clone = path.clone();
-    tokio::task::spawn_blocking(move || {
-        use lofty::Accessor;
-        use lofty::AudioFile;
-        use lofty::Probe;
-        use lofty::TaggedFileExt;
-        
-        let probed = Probe::open(&path_clone).and_then(|p| p.read());
-        match probed {
-            Ok(tagged) => {
-                let tag = tagged.primary_tag();
-                let props = tagged.properties();
-                let artist = tag.and_then(|t| t.artist()).map(|s| s.to_string());
-                let title = tag.and_then(|t| t.title()).map(|s| s.to_string());
-                let album = tag.and_then(|t| t.album()).map(|s| s.to_string());
-                let track = tag.and_then(|t| t.track()).map(|n| n as i32);
-                let year = tag.and_then(|t| t.year()).map(|y| y as i32);
-                let duration_ms = Some(props.duration().as_millis() as i32);
-                (artist, title, album, track, year, duration_ms)
-            }
-            Err(_) => (None, None, None, None, None, None),
-        }
-    })
-    .await
-    .unwrap_or((None, None, None, None, None, None))
+/// Extract metadata from a file path using shared helper
+async fn extract_file_metadata(path: &std::path::Path) -> (Option<String>, Option<String>, Option<String>, Option<i32>, Option<i32>, Option<i32>) {
+    let meta = crate::services::metadata_extractor::extract_metadata(path).await;
+    (meta.artist, meta.title, meta.album, meta.track_number, meta.year, meta.duration_ms)
 }
 
 /// Parse title from filename when metadata is missing
-fn title_from_filename(path: &PathBuf) -> String {
+fn title_from_filename(path: &std::path::Path) -> String {
     let fname = path.file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_string();
-    
-    if let Some(pos) = fname.find(" - ") {
-        let t = &fname[(pos + 3)..];
-        if let Some(dot) = t.rfind('.') {
-            return t[..dot].to_string();
-        }
-        return t.to_string();
-    }
-    
-    if let Some(dot) = fname.rfind('.') {
-        fname[..dot].to_string()
-    } else {
-        fname
-    }
+        .unwrap_or_default();
+    let (_artist, title) = crate::services::filename_parser::parse_filename(fname);
+    title
 }
 
 /// Insert a batch of rows into the database
@@ -337,7 +302,7 @@ pub async fn start_sync(
                     }
 
                     // Extract metadata
-                    let (artist, title_opt, album, track, year, duration_ms) = extract_metadata(&path).await;
+                    let (artist, title_opt, album, track, year, duration_ms) = extract_file_metadata(&path).await;
                     let title = title_opt.unwrap_or_else(|| title_from_filename(&path));
                     
                     let release_date = year.and_then(|y| {

@@ -4,7 +4,6 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-#[serde(rename_all = "camelCase")]
 pub struct AutoDownloadConfig {
     pub id: Uuid,
     pub enabled: bool,
@@ -20,7 +19,6 @@ pub struct AutoDownloadConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpdateAutoDownloadConfigRequest {
     pub enabled: Option<bool>,
     pub check_interval_minutes: Option<i32>,
@@ -31,7 +29,6 @@ pub struct UpdateAutoDownloadConfigRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AutoDownloadStatus {
     pub config: AutoDownloadConfig,
     pub is_running: bool,

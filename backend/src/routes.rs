@@ -1,6 +1,7 @@
 use actix_files::NamedFile;
 use actix_multipart::Multipart;
 use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::http::header::CONTENT_TYPE;
 use std::time::Instant;
 use futures_util::StreamExt;
 use sanitize_filename::sanitize;
@@ -10,22 +11,36 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::models::{
-    AppState, BulkAddToPlaylistByRegexRequest, BulkRenameByRegexRequest, CreateMusicFileRequest, CreatePlaylistRequest, CreateStreamRequest,
-    CreateYoutubePlaylistRequest, DetectGenreRequest, DetectGenreResponse, MusicQueryParams,
-    PlaylistTrackRequest, UpdateAutoDownloadConfigRequest, UpdateMusicFileRequest,
-    UpdatePlaylistRequest, UpdateStreamRequest, UpdateYoutubePlaylistRequest,
-    YoutubeDownloadRequest, YoutubeDownloadResponse,
+    app_state::AppState,
+    genre::{DetectGenreRequest, DetectGenreResponse},
+    metadata::{MetadataConfig, UpdateMetadataConfigRequest},
+    metadata_suggestion::MetadataSuggestion,
+    music::{
+        BulkAddToPlaylistByRegexRequest, BulkRenameByRegexRequest,
+        CreateMusicFileRequest, CutAudioRequest, MusicQueryParams, UpdateMusicFileRequest,
+    },
+    auto_download::UpdateAutoDownloadConfigRequest,
+    playlist::{
+        CreatePlaylistRequest, PlaylistTrackRequest, ReorderPlaylistTracksRequest, UpdatePlaylistRequest,
+    },
+    stream::{CreateStreamRequest, UpdateStreamRequest},
+    youtube::{
+        CreateYoutubePlaylistRequest, UpdateYoutubePlaylistRequest, YoutubeDownloadRequest,
+        YoutubeDownloadResponse,
+    },
 };
 use crate::services::auto_download_service;
 use crate::services::backfill_manager;
 use crate::services::reprocess_manager;
 use crate::services::sync_manager;
+use crate::services::discogs_service::DiscogsService;
 use crate::services::{
-    artist_service, file_sync_service, genre_cache_service, genre_detection, genre_label_service,
-    internet_stream_service, music_service, playlist_service, yt_download_service,
-    youtube_playlist_service,
+    artist_service, audio_edit_service, bpm_service, file_sync_service, genre_cache_service, genre_detection, genre_label_service,
+    internet_stream_service, music_service, playlist_service, playlist_export_service,
+    yt_download_service, youtube_playlist_service,
 };
 use crate::yt_downloader::{self, DownloadOptions};
+use urlencoding::encode as url_encode;
 
 // Health check endpoint
 pub async fn health_check() -> HttpResponse {
@@ -69,7 +84,7 @@ pub async fn db_health_check(state: web::Data<AppState>) -> HttpResponse {
 // Playlist routes
 pub async fn get_playlists(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
-    match playlist_service::get_all_playlists(&db).await {
+    match playlist_service::get_all_playlists(db).await {
         Ok(playlists) => HttpResponse::Ok().json(playlists),
         Err(e) => {
             log::error!("Error fetching playlists: {}", e);
@@ -83,8 +98,16 @@ pub async fn create_playlist(
     req: web::Json<CreatePlaylistRequest>,
 ) -> HttpResponse {
     let db = &state.db;
-    match playlist_service::create_playlist(&db, &req.name, req.description.clone()).await {
-        Ok(playlist) => HttpResponse::Created().json(playlist),
+    match playlist_service::create_playlist(db, &req.name, req.description.clone()).await {
+        Ok(playlist) => {
+            // Notify clients about new playlist
+            let _ = crate::services::cache_service::notify_change(
+                state.get_ref(),
+                "playlist_created",
+                serde_json::to_value(&playlist).unwrap_or(serde_json::Value::Null)
+            ).await;
+            HttpResponse::Created().json(playlist)
+        },
         Err(e) => {
             log::error!("Error creating playlist: {}", e);
             HttpResponse::InternalServerError().finish()
@@ -95,7 +118,7 @@ pub async fn create_playlist(
 pub async fn get_playlist(state: web::Data<AppState>, path: web::Path<Uuid>) -> HttpResponse {
     let id = path.into_inner();
     let db = &state.db;
-    match playlist_service::get_playlist_with_items(&db, id).await {
+    match playlist_service::get_playlist_with_items(db, id).await {
         Ok(Some(playlist)) => HttpResponse::Ok().json(playlist),
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => {
@@ -108,8 +131,17 @@ pub async fn get_playlist(state: web::Data<AppState>, path: web::Path<Uuid>) -> 
 pub async fn delete_playlist(state: web::Data<AppState>, path: web::Path<Uuid>) -> HttpResponse {
     let id = path.into_inner();
     let db = &state.db;
-    match playlist_service::delete_playlist(&db, id).await {
-        Ok(_) => HttpResponse::NoContent().finish(),
+    match playlist_service::delete_playlist(db, id).await {
+        Ok(_) => {
+            // Notify clients about deleted playlist
+            let payload = serde_json::json!({ "id": id });
+            let _ = crate::services::cache_service::notify_change(
+                state.get_ref(),
+                "playlist_deleted",
+                payload
+            ).await;
+            HttpResponse::NoContent().finish()
+        },
         Err(e) => {
             log::error!("Error deleting playlist: {}", e);
             HttpResponse::InternalServerError().finish()
@@ -124,8 +156,16 @@ pub async fn update_playlist_handler(
 ) -> HttpResponse {
     let id = path.into_inner();
     let db = &state.db;
-    match playlist_service::update_playlist(&db, id, payload.into_inner()).await {
-        Ok(Some(playlist)) => HttpResponse::Ok().json(playlist),
+    match playlist_service::update_playlist(db, id, payload.into_inner()).await {
+        Ok(Some(playlist)) => {
+            // Notify clients about updated playlist
+            let _ = crate::services::cache_service::notify_change(
+                state.get_ref(),
+                "playlist_updated",
+                serde_json::to_value(&playlist).unwrap_or(serde_json::Value::Null)
+            ).await;
+            HttpResponse::Ok().json(playlist)
+        },
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => {
             log::error!("Error updating playlist {}: {}", id, e);
@@ -141,8 +181,17 @@ pub async fn add_playlist_track(
 ) -> HttpResponse {
     let playlist_id = path.into_inner();
     let db = &state.db;
-    match playlist_service::add_track_to_playlist(&db, playlist_id, payload.into_inner()).await {
-        Ok(_) => HttpResponse::Created().finish(),
+    match playlist_service::add_track_to_playlist(db, playlist_id, payload.into_inner()).await {
+        Ok(_) => {
+            // Notify clients that a playlist has changed (track count/items)
+            let payload = serde_json::json!({ "id": playlist_id });
+            let _ = crate::services::cache_service::notify_change(
+                state.get_ref(),
+                "playlist_items_updated",
+                payload
+            ).await;
+            HttpResponse::Created().finish()
+        },
         Err(e) => {
             log::error!("Error adding track to playlist {}: {}", playlist_id, e);
             HttpResponse::InternalServerError().finish()
@@ -156,10 +205,79 @@ pub async fn remove_playlist_track(
 ) -> HttpResponse {
     let (playlist_id, track_id) = path.into_inner();
     let db = &state.db;
-    match playlist_service::remove_track_from_playlist(&db, playlist_id, track_id).await {
-        Ok(_) => HttpResponse::NoContent().finish(),
+    match playlist_service::remove_track_from_playlist(db, playlist_id, track_id).await {
+        Ok(_) => {
+            // Notify clients that a playlist has changed
+            let payload = serde_json::json!({ "id": playlist_id });
+            let _ = crate::services::cache_service::notify_change(
+                state.get_ref(),
+                "playlist_items_updated",
+                payload
+            ).await;
+            HttpResponse::NoContent().finish()
+        },
         Err(e) => {
             log::error!("Error removing track from playlist {}: {}", playlist_id, e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn export_playlist_zip(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let db = &state.db;
+    match playlist_export_service::export_playlist_zip(db, id, false).await {
+        Ok((temp_file, filename)) => {
+            let path = temp_file.path().to_path_buf();
+            match NamedFile::open(path) {
+                Ok(named_file) => named_file
+                    .set_content_disposition(actix_web::http::header::ContentDisposition {
+                        disposition: actix_web::http::header::DispositionType::Attachment,
+                        parameters: vec![actix_web::http::header::DispositionParam::Filename(filename)],
+                    })
+                    .into_response(&req),
+                Err(e) => {
+                    log::error!("Error opening temp zip for export: {}", e);
+                    HttpResponse::InternalServerError().finish()
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Error exporting playlist ZIP: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn export_playlist_rekordbox(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let db = &state.db;
+    match playlist_export_service::export_playlist_zip(db, id, true).await {
+        Ok((temp_file, filename)) => {
+            let path = temp_file.path().to_path_buf();
+            match NamedFile::open(path) {
+                Ok(named_file) => named_file
+                    .set_content_disposition(actix_web::http::header::ContentDisposition {
+                        disposition: actix_web::http::header::DispositionType::Attachment,
+                        parameters: vec![actix_web::http::header::DispositionParam::Filename(filename)],
+                    })
+                    .into_response(&req),
+                Err(e) => {
+                    log::error!("Error opening temp zip for export: {}", e);
+                    HttpResponse::InternalServerError().finish()
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Error exporting playlist Rekordbox: {}", e);
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -171,7 +289,7 @@ pub async fn get_music_files(
     query: web::Query<MusicQueryParams>,
 ) -> HttpResponse {
     let db = &state.db;
-    match music_service::get_all_music_files(&db, query.into_inner()).await {
+    match music_service::get_all_music_files(db, query.into_inner()).await {
         Ok(files) => HttpResponse::Ok().json(files),
         Err(e) => {
             log::error!("Error fetching music files: {}", e);
@@ -185,8 +303,13 @@ pub async fn create_music_file(
     req: web::Json<CreateMusicFileRequest>,
 ) -> HttpResponse {
     let db = &state.db;
-    match music_service::create_music_file(&db, req.into_inner()).await {
-        Ok(file) => HttpResponse::Created().json(file),
+    match music_service::create_music_file(db, req.into_inner()).await {
+        Ok(file) => {
+            // Invalidate cached 'all tracks' and notify clients.
+            let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+            let _ = crate::services::cache_service::notify_change(state.get_ref(), "music_created", serde_json::to_value(&file).unwrap_or(serde_json::Value::Null)).await;
+            HttpResponse::Created().json(file)
+        }
         Err(e) => {
             log::error!("Error creating music file: {}", e);
             HttpResponse::InternalServerError().finish()
@@ -216,7 +339,7 @@ pub async fn sync_music_folder(
         }
     };
 
-    match file_sync_service::sync_folder(&db, &folder).await {
+    match file_sync_service::sync_folder(db, &folder).await {
         Ok(inserted) => HttpResponse::Ok().json(serde_json::json!({"inserted": inserted})),
         Err(e) => {
             log::error!("Error syncing folder {}: {}", folder, e);
@@ -265,25 +388,12 @@ pub async fn sync_progress_stream(path: web::Path<String>) -> HttpResponse {
     if let Some(sessions) = crate::services::sync_manager::get_sync_sessions() {
         let sessions_map = sessions.read().await;
         if let Some(session) = sessions_map.get(&session_id) {
-            let mut rx = session.progress_tx.subscribe();
+            let rx = session.progress_tx.subscribe();
             drop(sessions_map);
 
-            let stream = async_stream::stream! {
-                while let Ok(progress) = rx.recv().await {
-                    let data = serde_json::to_string(&progress).unwrap_or_default();
-                    yield Ok::<_, actix_web::Error>(web::Bytes::from(format!("data: {}\n\n", data)));
-
-                    if progress.progress == Some(100.0) || progress.is_cancelled == Some(true) {
-                        break;
-                    }
-                }
-            };
-
-            return HttpResponse::Ok()
-                .insert_header(("Content-Type", "text/event-stream"))
-                .insert_header(("Cache-Control", "no-cache"))
-                .insert_header(("Connection", "keep-alive"))
-                .streaming(stream);
+            return crate::services::sse_helpers::sse_response(rx, |p: &crate::services::sync_manager::SyncProgress| {
+                p.progress == Some(100.0) || p.is_cancelled == Some(true)
+            });
         }
     }
 
@@ -302,74 +412,35 @@ pub async fn cancel_sync(_path: web::Path<String>) -> HttpResponse {
 pub async fn delete_music_file(state: web::Data<AppState>, path: web::Path<Uuid>) -> HttpResponse {
     let id = path.into_inner();
     let db = &state.db;
-    match music_service::delete_music_file(&db, id).await {
-        Ok(_) => HttpResponse::NoContent().finish(),
+
+    match music_service::delete_music_file(db, id).await {
+        Ok(_) => {
+            // Invalidate cache and notify clients
+            let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+            let payload = serde_json::json!({"id": id});
+            let _ = crate::services::cache_service::notify_change(state.get_ref(), "music_deleted", payload).await;
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
             log::error!("Error deleting music file: {}", e);
-            HttpResponse::InternalServerError().finish()
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
         }
     }
 }
 
-pub async fn check_duplicate_hash(
-    state: web::Data<AppState>,
-    payload: web::Json<serde_json::Value>,
-) -> HttpResponse {
-    let db = &state.db;
-    let hash = match payload.get("hash").and_then(|v| v.as_str()) {
-        Some(h) => h,
-        None => {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "error": "Missing or invalid hash field"
-            }))
-        }
-    };
-
-    match music_service::is_duplicate_hash(&db, hash).await {
-        Ok(exists) => {
-            HttpResponse::Ok().json(serde_json::json!({
-                "hash": hash,
-                "exists": exists
-            }))
-        }
-        Err(e) => {
-            log::error!("Error checking duplicate hash: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to check duplicate"
-            }))
-        }
-    }
-}
-
-pub async fn get_music_file_detail(
+pub async fn cut_music_file(
     state: web::Data<AppState>,
     path: web::Path<Uuid>,
+    req: web::Json<CutAudioRequest>,
 ) -> HttpResponse {
     let id = path.into_inner();
     let db = &state.db;
-    match music_service::get_music_file(&db, id).await {
-        Ok(Some(file)) => HttpResponse::Ok().json(file),
-        Ok(None) => HttpResponse::NotFound().finish(),
-        Err(e) => {
-            log::error!("Error fetching music file {}: {}", id, e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
-}
 
-pub async fn update_music_file_handler(
-    state: web::Data<AppState>,
-    path: web::Path<Uuid>,
-    payload: web::Json<UpdateMusicFileRequest>,
-) -> HttpResponse {
-    let id = path.into_inner();
-    let db = &state.db;
-    match music_service::update_music_file(&db, id, payload.into_inner()).await {
-        Ok(Some(file)) => HttpResponse::Ok().json(file),
-        Ok(None) => HttpResponse::NotFound().finish(),
+    match audio_edit_service::cut_audio(db, id, req.start, req.end).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({"status": "success"})),
         Err(e) => {
-            log::error!("Error updating music file {}: {}", id, e);
-            HttpResponse::InternalServerError().finish()
+            log::error!("Error cutting music file: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
         }
     }
 }
@@ -381,7 +452,7 @@ pub async fn stream_music_file(
 ) -> actix_web::Result<actix_web::HttpResponse> {
     let id = path.into_inner();
     let db = &state.db;
-    let record = music_service::get_music_file(&db, id).await.map_err(|e| {
+    let record = music_service::get_music_file(db, id).await.map_err(|e| {
         log::error!("Error getting music file {} for streaming: {}", id, e);
         actix_web::error::ErrorInternalServerError("db")
     })?;
@@ -426,7 +497,7 @@ pub async fn upload_music_files(
                 let filename = field
                     .content_disposition()
                     .and_then(|cd| cd.get_filename())
-                    .map(|f| sanitize(f))
+                    .map(sanitize)
                     .unwrap_or_else(|| format!("upload-{}", chrono::Utc::now().timestamp()));
 
                 let filepath = Path::new(&upload_root).join(&filename);
@@ -461,60 +532,33 @@ pub async fn upload_music_files(
                             continue;
                         }
 
-                        // Extract metadata from the uploaded file using lofty
-                        let filepath_clone = filepath.clone();
-                        let meta = tokio::task::spawn_blocking(move || {
-                            use lofty::{Accessor, AudioFile, Probe, TaggedFileExt};
-                            
-                            let probed = Probe::open(&filepath_clone).and_then(|p| p.read());
-                            match probed {
-                                Ok(tagged) => {
-                                    let tag = tagged.primary_tag();
-                                    let properties = tagged.properties();
+                        // Extract metadata from the uploaded file using shared helper
+                        let meta = crate::services::metadata_extractor::extract_metadata(&filepath).await;
 
-                                    let artist = tag.and_then(|t| t.artist()).map(|s| s.to_string());
-                                    let title = tag.and_then(|t| t.title()).map(|s| s.to_string());
-                                    let album = tag.and_then(|t| t.album()).map(|s| s.to_string());
-                                    let duration_ms = Some(properties.duration().as_millis() as i32);
-                                    (artist, title, album, duration_ms)
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to read metadata from {}: {}", filepath_clone.display(), e);
-                                    (None, None, None, None)
-                                }
-                            }
-                        })
-                        .await
-                        .unwrap_or((None, None, None, None));
-
-                        let (artist_opt, title_opt, album_opt, duration_ms) = meta;
+                        let (artist_opt, title_opt, album_opt, duration_ms) = (meta.artist, meta.title, meta.album, meta.duration_ms);
 
                         // Fallback to filename parsing when metadata missing
                         let file_name = Path::new(&filename)
                             .file_name()
                             .and_then(|s| s.to_str())
                             .unwrap_or_default();
-                        let (file_artist, file_title) = parse_filename_for_upload(file_name);
+                        let (file_artist, file_title) = crate::services::filename_parser::parse_filename(file_name);
 
                         // Use metadata artist if available and not empty, otherwise use parsed artist
                         let artist = artist_opt
                             .filter(|s| !s.trim().is_empty())
-                            .or_else(|| file_artist.map(|s| s.to_string()));
+                            .or(file_artist);
                         
                         // Use metadata title if available and not empty, otherwise use parsed title
                         let mut title = title_opt
                             .filter(|s| !s.trim().is_empty())
-                            .unwrap_or_else(|| file_title.to_string());
+                            .unwrap_or(file_title);
                         
                         // If title contains "Artist - Title" pattern and we have an artist, extract just the title
                         if let Some(ref artist_name) = artist {
                             // Check if title starts with "Artist - " pattern
                             let artist_prefix = format!("{} - ", artist_name);
-                            if title.starts_with(&artist_prefix) {
-                                title = title[artist_prefix.len()..].to_string();
-                            }
-                            // Also check case-insensitive
-                            else if title.to_lowercase().starts_with(&artist_prefix.to_lowercase()) {
+                            if title.starts_with(&artist_prefix) || title.to_lowercase().starts_with(&artist_prefix.to_lowercase()) {
                                 title = title[artist_prefix.len()..].to_string();
                             }
                         }
@@ -557,10 +601,23 @@ pub async fn upload_music_files(
                             file_path: file_path_str,
                             track_number: None,
                             file_hash,
+                            bpm: None,
+                            initial_key: None,
+                            beat_grid_offset: None,
+                            beat_map: None,
+                            metadata_analyzed: Some(false),
                         };
 
                         match music_service::create_music_file(&db, req).await {
                             Ok(record) => {
+                                // Invalidate cache and notify clients
+                                let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+                                let _ = crate::services::cache_service::notify_change(
+                                    state.get_ref(),
+                                    "music_created",
+                                    serde_json::to_value(&record).unwrap_or(serde_json::Value::Null)
+                                ).await;
+
                                 // Parse all artists from artist field and title
                                 let parsed = crate::services::artist_parser::parse_artists(
                                     record.artist.as_deref(),
@@ -614,30 +671,355 @@ pub async fn upload_music_files(
     }))
 }
 
-/// Parse filename to extract artist and title (used for uploads)
-fn parse_filename_for_upload(file_name: &str) -> (Option<&str>, &str) {
-    // Try to split on " - " to extract artist and title
-    if let Some(pos) = file_name.find(" - ") {
-        let artist = &file_name[..pos];
-        let mut title = &file_name[(pos + 3)..];
-        // strip extension
-        if let Some(dot) = title.rfind('.') {
-            title = &title[..dot];
+
+/// Get music stats (total count + duration) for current filters (ignoring pagination)
+pub async fn get_music_stats(
+    state: web::Data<AppState>,
+    query: web::Query<MusicQueryParams>,
+) -> HttpResponse {
+    let db = &state.db;
+    match music_service::get_music_stats(db, query.into_inner()).await {
+        Ok(stats) => HttpResponse::Ok().json(stats),
+        Err(e) => {
+            log::error!("Error fetching music stats: {}", e);
+            HttpResponse::InternalServerError().finish()
         }
-        (Some(artist.trim()), title.trim())
+    }
+}
+
+pub async fn get_music_file_detail(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let db = &state.db;
+    match music_service::get_music_file(db, id).await {
+        Ok(Some(file)) => HttpResponse::Ok().json(file),
+        Ok(None) => HttpResponse::NotFound().finish(),
+        Err(e) => {
+            log::error!("Error fetching music file {}: {}", id, e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn update_music_file_handler(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    payload: web::Json<UpdateMusicFileRequest>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let db = &state.db;
+    match music_service::update_music_file(db, id, payload.into_inner()).await {
+        Ok(Some(file)) => {
+            // Invalidate cache and notify clients about update
+            let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+            let _ = crate::services::cache_service::notify_change(state.get_ref(), "music_updated", serde_json::to_value(&file).unwrap_or(serde_json::Value::Null)).await;
+            HttpResponse::Ok().json(file)
+        }
+        Ok(None) => HttpResponse::NotFound().finish(),
+        Err(e) => {
+            log::error!("Error updating music file {}: {}", id, e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct CheckDuplicateHashRequest {
+    pub hash: String,
+}
+
+pub async fn check_duplicate_hash(
+    state: web::Data<AppState>,
+    payload: web::Json<CheckDuplicateHashRequest>,
+) -> HttpResponse {
+    let db = &state.db;
+    match music_service::is_duplicate_hash(db, &payload.hash).await {
+        Ok(exists) => HttpResponse::Ok().json(serde_json::json!({ "exists": exists })),
+        Err(e) => {
+            log::error!("Error checking duplicate hash: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+/// Get playlists that contain a specific track
+pub async fn get_track_playlists(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let db = &state.db;
+    match music_service::get_track_playlists(db, id).await {
+        Ok(playlists) => HttpResponse::Ok().json(playlists),
+        Err(e) => {
+            log::error!("Error fetching track playlists: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+/// Lookup release date from MusicBrainz for a track
+#[derive(serde::Deserialize)]
+pub struct ReleaseDateLookupRequest {
+    pub title: String,
+    pub artist: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ReleaseDateLookupResponse {
+    pub release_date: Option<String>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub confidence: f64,
+}
+
+pub async fn lookup_release_date(
+    state: web::Data<AppState>,
+    body: web::Json<ReleaseDateLookupRequest>,
+) -> HttpResponse {
+    let title = &body.title;
+    let artist = body.artist.as_deref().unwrap_or("");
+
+    // Load metadata configuration
+    let config = match MetadataConfig::get_config(&state.db.pool).await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to load metadata config: {}", e);
+            // Fallback to Discogs as default if DB fails
+            MetadataConfig {
+                id: Uuid::new_v4(),
+                metadata_source: "discogs".to_string(),
+                discogs_token: std::env::var("DISCOGS_TOKEN").ok(),
+                updated_at: chrono::Utc::now(),
+            }
+        }
+    };
+
+    let client = &state.http_client;
+
+    if config.metadata_source == "discogs" {
+        log::info!("Looking up release date on Discogs for: {} - {}", artist, title);
+        match DiscogsService::lookup_release_date(client, &config, title, artist).await {
+            Ok(Some((date, album, style, confidence))) => {
+                return HttpResponse::Ok().json(ReleaseDateLookupResponse {
+                    release_date: Some(date),
+                    album,
+                    genre: style,
+                    confidence,
+                });
+            }
+            Ok(None) => {
+                log::info!("No release date found on Discogs for: {} - {}", artist, title);
+                return HttpResponse::Ok().json(serde_json::json!({
+                    "release_date": null,
+                    "album": null,
+                    "genre": null,
+                    "confidence": 0.0,
+                    "error": "No match found on Discogs"
+                }));
+            }
+            Err(e) => {
+                log::error!("Discogs lookup failed: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Lookup failed: {}", e)
+                }));
+            }
+        }
+    }
+
+    // Default: MusicBrainz
+    // Build a MusicBrainz recording search query
+    let query = if artist.is_empty() {
+        format!("recording:{}", urlencoding::encode(title))
     } else {
-        // No artist, strip extension and return None for artist
-        let mut title = file_name;
-        if let Some(dot) = title.rfind('.') {
-            title = &title[..dot];
+        format!(
+            "recording:{} AND artist:{}",
+            urlencoding::encode(title),
+            urlencoding::encode(artist)
+        )
+    };
+
+    let url = format!(
+        "https://musicbrainz.org/ws/2/recording/?query={}&fmt=json&limit=5",
+        query
+    );
+
+    let response = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("MusicBrainz request failed: {}", e);
+            return HttpResponse::Ok().json(ReleaseDateLookupResponse {
+                release_date: None,
+                album: None,
+                genre: None,
+                confidence: 0.0,
+            });
         }
-        (None, title.trim())
+    };
+
+    let json: serde_json::Value = match response.json().await {
+        Ok(j) => j,
+        Err(e) => {
+            log::error!("MusicBrainz JSON parse failed: {}", e);
+            return HttpResponse::Ok().json(ReleaseDateLookupResponse {
+                release_date: None,
+                album: None,
+                genre: None,
+                confidence: 0.0,
+            });
+        }
+    };
+
+    // Parse the response - look for the earliest release date among high-confidence matches
+    let mut best_match: Option<(String, Option<String>, f64)> = None;
+
+    if let Some(recordings) = json.get("recordings").and_then(|r| r.as_array()) {
+        for recording in recordings {
+            let score = recording.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+            if score < 50.0 {
+                continue;
+            }
+
+            // Look at releases for this recording
+            if let Some(releases) = recording.get("releases").and_then(|r| r.as_array()) {
+                for release in releases {
+                    let date = release.get("date").and_then(|d| d.as_str());
+                    let album_title = release.get("title").and_then(|t| t.as_str());
+                    
+                    if let Some(date_str) = date {
+                        if !date_str.is_empty() {
+                            // If we have a new date, check if it's earlier than our current best
+                            let is_earlier = match &best_match {
+                                None => true,
+                                Some((best_date, _, _)) => date_str < best_date.as_str(),
+                            };
+
+                            if is_earlier {
+                                best_match = Some((
+                                    date_str.to_string(),
+                                    album_title.map(|s| s.to_string()),
+                                    score / 100.0,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((date, album, confidence)) = best_match {
+        return HttpResponse::Ok().json(ReleaseDateLookupResponse {
+            release_date: Some(date),
+            album,
+            genre: None, // MusicBrainz doesn't give genre directly here easily without more calls
+            confidence,
+        });
+    }
+
+    HttpResponse::Ok().json(ReleaseDateLookupResponse {
+        release_date: None,
+        album: None,
+        genre: None,
+        confidence: 0.0,
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub struct PaginationQuery {
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+pub async fn get_metadata_suggestions(
+    state: web::Data<AppState>,
+    query: web::Query<PaginationQuery>,
+) -> HttpResponse {
+    let limit = query.limit.unwrap_or(20);
+    let offset = query.offset.unwrap_or(0);
+
+    let suggestions = match sqlx::query_as::<_, MetadataSuggestion>(
+        r#"
+        SELECT music_file_id, release_date, album, genre, confidence, created_at, updated_at
+        FROM metadata_suggestions
+        WHERE confidence > 0.0 OR release_date IS NOT NULL OR album IS NOT NULL OR genre IS NOT NULL
+        ORDER BY confidence DESC, created_at DESC
+        LIMIT $1 OFFSET $2
+        "#
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db.pool)
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to fetch metadata suggestions: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch metadata suggestions: {}", e)
+            }));
+        }
+    };
+
+    // Also return total count for pagination
+    let total_count: (i64,) = match sqlx::query_as("SELECT COUNT(*) FROM metadata_suggestions")
+        .fetch_one(&state.db.pool)
+        .await
+    {
+        Ok(c) => c,
+        Err(_) => (0,),
+    };
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "suggestions": suggestions,
+        "total": total_count.0,
+        "offset": offset,
+        "limit": limit
+    }))
+}
+
+pub async fn delete_metadata_suggestion(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    match sqlx::query("DELETE FROM metadata_suggestions WHERE music_file_id = $1")
+        .bind(id)
+        .execute(&state.db.pool)
+        .await
+    {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(e) => {
+            log::error!("Failed to delete metadata suggestion: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+pub async fn delete_all_metadata_suggestions(state: web::Data<AppState>) -> HttpResponse {
+    match sqlx::query("DELETE FROM metadata_suggestions")
+        .execute(&state.db.pool)
+        .await
+    {
+        Ok(result) => HttpResponse::Ok().json(serde_json::json!({
+            "deleted": result.rows_affected()
+        })),
+        Err(e) => {
+            log::error!("Failed to delete all metadata suggestions: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
     }
 }
 
 pub async fn list_streams(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
-    match internet_stream_service::list_streams(&db).await {
+    match internet_stream_service::list_streams(db).await {
         Ok(streams) => HttpResponse::Ok().json(streams),
         Err(e) => {
             log::error!("Error listing streams: {}", e);
@@ -651,7 +1033,7 @@ pub async fn create_stream(
     payload: web::Json<CreateStreamRequest>,
 ) -> HttpResponse {
     let db = &state.db;
-    match internet_stream_service::create_stream(&db, payload.into_inner()).await {
+    match internet_stream_service::create_stream(db, payload.into_inner()).await {
         Ok(stream) => HttpResponse::Created().json(stream),
         Err(e) => {
             log::error!("Error creating stream: {}", e);
@@ -667,7 +1049,7 @@ pub async fn update_stream(
 ) -> HttpResponse {
     let id = path.into_inner();
     let db = &state.db;
-    match internet_stream_service::update_stream(&db, id, payload.into_inner()).await {
+    match internet_stream_service::update_stream(db, id, payload.into_inner()).await {
         Ok(Some(stream)) => HttpResponse::Ok().json(stream),
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => {
@@ -680,7 +1062,7 @@ pub async fn update_stream(
 pub async fn delete_stream(state: web::Data<AppState>, path: web::Path<Uuid>) -> HttpResponse {
     let id = path.into_inner();
     let db = &state.db;
-    match internet_stream_service::delete_stream(&db, id).await {
+    match internet_stream_service::delete_stream(db, id).await {
         Ok(true) => HttpResponse::NoContent().finish(),
         Ok(false) => HttpResponse::NotFound().finish(),
         Err(e) => {
@@ -693,7 +1075,7 @@ pub async fn delete_stream(state: web::Data<AppState>, path: web::Path<Uuid>) ->
 // Artist routes
 pub async fn list_artists(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
-    match artist_service::get_all_artists_with_summary(&db).await {
+    match artist_service::get_all_artists_with_summary(db).await {
         Ok(artists) => HttpResponse::Ok().json(artists),
         Err(e) => {
             log::error!("Error listing artists: {}", e);
@@ -714,7 +1096,7 @@ pub async fn get_artist_music(
         .map(|s| s.into_owned())
         .unwrap_or(artist_name);
     
-    match artist_service::get_music_featuring_artist(&db, &decoded_name).await {
+    match artist_service::get_music_featuring_artist(db, &decoded_name).await {
         Ok(music) => HttpResponse::Ok().json(music),
         Err(e) => {
             log::error!("Error fetching music for artist {}: {}", decoded_name, e);
@@ -741,10 +1123,15 @@ pub async fn set_artist_genre_handler(
         .map(|s| s.into_owned())
         .unwrap_or(artist_name);
     
-    match artist_service::set_artist_genre(&db, &decoded_name, &payload.genre).await {
+    match artist_service::set_artist_genre(db, &decoded_name, &payload.genre).await {
         Ok(()) => {
             // Also update guessed_genre for all their songs
-            let _ = artist_service::update_guessed_genre_for_artist(&db, &decoded_name, &payload.genre).await;
+            let _ = artist_service::update_guessed_genre_for_artist(db, &decoded_name, &payload.genre).await;
+            // Invalidate artist summary cache and all tracks cache and notify clients
+            let _ = crate::services::cache_service::invalidate_artists_summary_cache(state.get_ref()).await;
+            let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+            let payload_val = serde_json::json!({"artist": decoded_name.clone(), "genre": payload.genre});
+            let _ = crate::services::cache_service::notify_change(state.get_ref(), "artist_genre_set", payload_val).await;
             HttpResponse::Ok().json(serde_json::json!({"success": true}))
         }
         Err(e) => {
@@ -776,10 +1163,8 @@ pub async fn confirm_genre_handler(
         }
     };
 
-    // Get the track
-    let track = match sqlx::query_as::<_, crate::models::MusicFile>(
-        "SELECT id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at FROM music_files WHERE id = $1"
-    )
+    let select_sql = format!("{} WHERE id = $1", crate::services::music_query_helpers::select_music_files());
+    let track = match sqlx::query_as::<_, crate::models::MusicFile>(&select_sql)
     .bind(track_id)
     .fetch_optional(&db.pool)
     .await {
@@ -820,7 +1205,7 @@ pub async fn confirm_genre_handler(
                 }
                 _ => {
                     // Artist doesn't exist or has "Unknown" genre, set it
-                    if let Err(e) = artist_service::set_artist_genre(&db, artist, &payload.genre).await {
+                    if let Err(e) = artist_service::set_artist_genre(db, artist, &payload.genre).await {
                         log::warn!("Error setting artist genre: {}", e);
                     }
                 }
@@ -867,8 +1252,15 @@ pub async fn rename_artist_handler(
         }));
     }
     
-    match artist_service::rename_artist(&db, &decoded_old_name, new_name).await {
-        Ok(result) => HttpResponse::Ok().json(result),
+    match artist_service::rename_artist(db, &decoded_old_name, new_name).await {
+        Ok(result) => {
+            // Invalidate caches and notify
+            let _ = crate::services::cache_service::invalidate_artists_summary_cache(state.get_ref()).await;
+            let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+            let payload_val = serde_json::json!({"old_name": decoded_old_name, "new_name": new_name});
+            let _ = crate::services::cache_service::notify_change(state.get_ref(), "artist_renamed", payload_val).await;
+            HttpResponse::Ok().json(result)
+        },
         Err(e) => {
             log::error!("Error renaming artist {} to {}: {}", decoded_old_name, new_name, e);
             HttpResponse::InternalServerError().json(serde_json::json!({
@@ -916,8 +1308,9 @@ pub async fn download_youtube(
     let url = req.url.clone();
     let output_dir = req.output_dir.clone();
     let sessions = state.download_sessions.clone();
+    let update_tx = state.cache_update_tx.clone();
 
-    match yt_downloader::download_youtube_playlist(url, output_dir, Some(options), sessions, pool)
+    match yt_downloader::download_youtube_playlist(url, output_dir, Some(options), sessions, pool, Some(update_tx))
         .await
     {
         Ok(session_id) => HttpResponse::Accepted().json(YoutubeDownloadResponse {
@@ -971,28 +1364,41 @@ pub async fn youtube_download_stream(
     let sessions = state.download_sessions.read().await;
 
     if let Some(session) = sessions.get(&session_id) {
-        let mut rx = session.progress_tx.subscribe();
+        let rx = session.progress_tx.subscribe();
         drop(sessions); // Release the lock
 
-        let stream = async_stream::stream! {
-            while let Ok(progress) = rx.recv().await {
-                let data = serde_json::to_string(&progress).unwrap_or_default();
-                yield Ok::<_, actix_web::Error>(web::Bytes::from(format!("data: {}\n\n", data)));
-
-                // Break if download is complete or cancelled
-                if progress.progress == Some(100.0) || progress.is_cancelled == Some(true) {
-                    break;
-                }
-            }
-        };
-
-        HttpResponse::Ok()
-            .insert_header(("Content-Type", "text/event-stream"))
-            .insert_header(("Cache-Control", "no-cache"))
-            .insert_header(("Connection", "keep-alive"))
-            .streaming(stream)
+        crate::services::sse_helpers::sse_response(rx, |p: &crate::yt_downloader::DownloadProgress| {
+            p.progress == Some(100.0) || p.is_cancelled == Some(true)
+        })
     } else {
         HttpResponse::NotFound().json(serde_json::json!({"error": "Session not found"}))
+    }
+}
+
+/// SSE stream for generic updates/notifications (cache invalidation, created/updated/deleted items)
+pub async fn updates_stream(state: web::Data<AppState>) -> HttpResponse {
+    let rx = state.cache_update_tx.subscribe();
+
+    crate::services::sse_helpers::sse_response(rx, |_: &serde_json::Value| false)
+}
+
+pub async fn get_cached_tracks(state: web::Data<AppState>) -> HttpResponse {
+    match crate::services::cache_service::get_all_tracks_cached(&state).await {
+        Ok(files) => HttpResponse::Ok().json(files),
+        Err(e) => {
+            log::error!("Error fetching cached tracks: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn get_cached_artists(state: web::Data<AppState>) -> HttpResponse {
+    match crate::services::cache_service::get_artists_summary_cached(&state).await {
+        Ok(artists) => HttpResponse::Ok().json(artists),
+        Err(e) => {
+            log::error!("Error fetching cached artists: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
     }
 }
 
@@ -1011,7 +1417,9 @@ pub async fn get_download_stats(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
     match yt_download_service::get_download_count(&db.pool).await {
         Ok(count) => HttpResponse::Ok().json(crate::models::YoutubeDownloadStats {
-            total_downloaded: count,
+            total_downloads: count,
+            unique_videos: count,
+            total_size: 0, // Not currently tracked
         }),
         Err(e) => {
             log::error!("Error getting download count: {}", e);
@@ -1041,7 +1449,6 @@ pub async fn delete_download_record(
     }
 }
 
-// YouTube Playlist management routes (for saving playlist links)
 pub async fn list_youtube_playlists(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
     match youtube_playlist_service::list_playlists(db).await {
@@ -1146,6 +1553,7 @@ pub async fn sync_youtube_playlist(
     
     let sessions = state.download_sessions.clone();
     let pool = db.pool.clone();
+    let update_tx = state.cache_update_tx.clone();
     
     match yt_downloader::download_youtube_playlist(
         playlist.url.clone(),
@@ -1153,6 +1561,7 @@ pub async fn sync_youtube_playlist(
         Some(options),
         sessions,
         pool,
+        Some(update_tx),
     ).await {
         Ok(session_id) => {
             // Mark as synced
@@ -1175,9 +1584,9 @@ pub async fn detect_genre(
     req: web::Json<DetectGenreRequest>,
 ) -> HttpResponse {
     let db = &state.db;
-    match genre_detection::detect_genre_for_artist(&db, req.artist_name.clone()).await {
+    match genre_detection::detect_genre_for_artist(db, req.artist_name.clone()).await {
         Ok(genre) => {
-            let cached = genre_cache_service::is_cached(&db, &req.artist_name)
+            let cached = genre_cache_service::is_cached(db, &req.artist_name)
                 .await
                 .unwrap_or(false);
             HttpResponse::Ok().json(DetectGenreResponse {
@@ -1195,7 +1604,7 @@ pub async fn detect_genre(
 
 pub async fn get_genre_cache(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
-    match genre_cache_service::get_all_cached_genres(&db).await {
+    match genre_cache_service::get_all_cached_genres(db).await {
         Ok(cache) => HttpResponse::Ok().json(cache),
         Err(e) => {
             log::error!("Error fetching genre cache: {}", e);
@@ -1206,7 +1615,7 @@ pub async fn get_genre_cache(state: web::Data<AppState>) -> HttpResponse {
 
 pub async fn clear_genre_cache(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
-    match genre_cache_service::clear_all_cache(&db).await {
+    match genre_cache_service::clear_all_cache(db).await {
         Ok(count) => HttpResponse::Ok().json(serde_json::json!({"cleared": count})),
         Err(e) => {
             log::error!("Error clearing genre cache: {}", e);
@@ -1219,22 +1628,79 @@ pub async fn clear_genre_cache(state: web::Data<AppState>) -> HttpResponse {
 pub async fn list_genres(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
     // Return genres with track counts from actual music files
-    match genre_label_service::list_genres_with_counts(&db).await {
+    match genre_label_service::list_genres_with_counts(db).await {
         Ok(genres) => HttpResponse::Ok().json(genres),
         Err(e) => {
+            // Log full error server-side and return a small JSON error so the client can show details
             log::error!("Error listing genres: {}", e);
-            HttpResponse::InternalServerError().finish()
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": format!("Failed to list genres: {}", e.to_string()) }))
         }
     }
 }
 
 // List canonical genres (admin-defined genre taxonomy)
-pub async fn list_canonical_genres(state: web::Data<AppState>) -> HttpResponse {
+pub async fn list_canonical_genres(
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let db = &state.db;
-    match genre_label_service::list_genres(&db).await {
-        Ok(genres) => HttpResponse::Ok().json(genres),
+    match genre_label_service::list_genres_extended(db).await {
+        Ok(list) => HttpResponse::Ok().json(list),
         Err(e) => {
             log::error!("Error listing canonical genres: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn merge_genres_handler(
+    state: web::Data<AppState>,
+    body: web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let db = &state.db;
+    let source_id = body
+        .get("source_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let target_id = body
+        .get("target_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok());
+
+    if source_id.is_none() || target_id.is_none() {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({"error": "Missing source_id or target_id"}));
+    }
+
+    match genre_label_service::merge_genres(db, source_id.unwrap(), target_id.unwrap()).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({"success": true})),
+        Err(e) => {
+            log::error!("Error merging genres: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn list_unmapped_genres(state: web::Data<AppState>) -> HttpResponse {
+    let db = &state.db;
+    match genre_label_service::list_unmapped_tags(db, 100).await {
+        Ok(tags) => HttpResponse::Ok().json(tags),
+        Err(e) => {
+            log::error!("Error listing unmapped genres: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn suggest_genre_matches(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let db = &state.db;
+    let raw = path.into_inner();
+    match genre_label_service::suggest_similar(db, &raw, 5).await {
+        Ok(suggestions) => HttpResponse::Ok().json(suggestions),
+        Err(e) => {
+            log::error!("Error suggesting genres: {}", e);
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -1245,22 +1711,57 @@ pub async fn create_genre(
     body: web::Json<serde_json::Value>,
 ) -> HttpResponse {
     let db = &state.db;
-    let name = body
-        .get("name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let description = body
-        .get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let name = body.get("name").and_then(|v| v.as_str());
+    let description = body.get("description").and_then(|v| v.as_str());
+
     if name.is_none() {
         return HttpResponse::BadRequest().json(serde_json::json!({"error": "Missing name"}));
     }
 
-    match genre_label_service::create_genre(&db, &name.unwrap(), description.as_deref()).await {
-        Ok(g) => HttpResponse::Created().json(g),
+    match genre_label_service::create_genre(db, name.unwrap(), description).await {
+        Ok(genre) => HttpResponse::Created().json(genre),
         Err(e) => {
             log::error!("Error creating genre: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn update_genre_handler(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    body: web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let db = &state.db;
+    let id = path.into_inner();
+    let name = body.get("name").and_then(|v| v.as_str());
+    let description = body.get("description").and_then(|v| v.as_str());
+
+    if name.is_none() {
+        return HttpResponse::BadRequest().json(serde_json::json!({"error": "Missing name"}));
+    }
+
+    match genre_label_service::update_genre(db, id, name.unwrap(), description).await {
+        Ok(Some(genre)) => HttpResponse::Ok().json(genre),
+        Ok(None) => HttpResponse::NotFound().finish(),
+        Err(e) => {
+            log::error!("Error updating genre: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn delete_genre_handler(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let db = &state.db;
+    let id = path.into_inner();
+    match genre_label_service::delete_genre(db, id).await {
+        Ok(true) => HttpResponse::NoContent().finish(),
+        Ok(false) => HttpResponse::NotFound().finish(),
+        Err(e) => {
+            log::error!("Error deleting genre: {}", e);
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -1271,89 +1772,19 @@ pub async fn add_genre_alias(
     body: web::Json<serde_json::Value>,
 ) -> HttpResponse {
     let db = &state.db;
-    let alias = body
-        .get("alias")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let alias = body.get("alias").and_then(|v| v.as_str());
     let genre_id = body
         .get("genre_id")
         .and_then(|v| v.as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        .and_then(|s| Uuid::parse_str(s).ok());
 
     if alias.is_none() || genre_id.is_none() {
         return HttpResponse::BadRequest()
             .json(serde_json::json!({"error": "Missing alias or genre_id"}));
     }
 
-    match genre_label_service::add_alias(&db, &alias.unwrap(), genre_id.unwrap()).await {
-        Ok(_) => HttpResponse::Created().json(serde_json::json!({"ok": true})),
-        Err(e) => {
-            log::error!("Error adding genre alias: {}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
-}
-
-pub async fn suggest_genre_matches(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-) -> HttpResponse {
-    let raw = path.into_inner();
-    let db = &state.db;
-    match genre_label_service::suggest_similar(&db, &raw, 10).await {
-        Ok(suggestions) => HttpResponse::Ok().json(suggestions),
-        Err(e) => {
-            log::error!("Error suggesting genres: {}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
-}
-
-pub async fn add_genre_alias_and_backfill(
-    state: web::Data<AppState>,
-    body: web::Json<serde_json::Value>,
-) -> HttpResponse {
-    let db = &state.db;
-    let alias = body
-        .get("alias")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let genre_id = body
-        .get("genre_id")
-        .and_then(|v| v.as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
-
-    if alias.is_none() || genre_id.is_none() {
-        return HttpResponse::BadRequest()
-            .json(serde_json::json!({"error": "Missing alias or genre_id"}));
-    }
-
-    // resolve canonical name for backfill
-    let canonical = match genre_label_service::list_genres(&db).await {
-        Ok(list) => list
-            .into_iter()
-            .find(|g| g.id == genre_id.unwrap())
-            .map(|g| g.name),
-        Err(_) => None,
-    };
-
-    if canonical.is_none() {
-        return HttpResponse::BadRequest().json(serde_json::json!({"error": "Genre id not found"}));
-    }
-
-    match genre_label_service::add_alias(&db, &alias.clone().unwrap(), genre_id.unwrap()).await {
-        Ok(_) => {
-            // backfill
-            match genre_label_service::backfill_alias(&db, &alias.unwrap(), &canonical.unwrap())
-                .await
-            {
-                Ok(updated) => HttpResponse::Ok().json(serde_json::json!({"backfilled": updated})),
-                Err(e) => {
-                    log::error!("Backfill error: {}", e);
-                    HttpResponse::InternalServerError().finish()
-                }
-            }
-        }
+    match genre_label_service::add_alias(db, alias.unwrap(), genre_id.unwrap()).await {
+        Ok(_) => HttpResponse::Created().finish(),
         Err(e) => {
             log::error!("Error adding genre alias: {}", e);
             HttpResponse::InternalServerError().finish()
@@ -1365,13 +1796,57 @@ pub async fn preview_backfill_handler(
     state: web::Data<AppState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let alias = path.into_inner();
     let db = &state.db;
-    match genre_label_service::preview_backfill(&db, &alias).await {
-        Ok((music_count, artist_count)) => HttpResponse::Ok()
-            .json(serde_json::json!({"music_rows": music_count, "artist_rows": artist_count})),
+    let alias = path.into_inner();
+    match genre_label_service::preview_backfill(db, &alias).await {
+        Ok((music_rows, artist_rows)) => HttpResponse::Ok().json(serde_json::json!({
+            "music_rows": music_rows,
+            "artist_rows": artist_rows
+        })),
         Err(e) => {
             log::error!("Error previewing backfill: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn add_genre_alias_and_backfill(
+    state: web::Data<AppState>,
+    body: web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let db = &state.db;
+    let alias = body.get("alias").and_then(|v| v.as_str());
+    let genre_id = body
+        .get("genre_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok());
+
+    if alias.is_none() || genre_id.is_none() {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({"error": "Missing alias or genre_id"}));
+    }
+
+    // Get the canonical name
+    let canonical_name: String = match sqlx::query_scalar("SELECT name FROM genres WHERE id = $1")
+        .bind(genre_id.unwrap())
+        .fetch_one(&db.pool)
+        .await
+    {
+        Ok(name) => name,
+        Err(_) => return HttpResponse::NotFound().finish(),
+    };
+
+    // Add alias
+    if let Err(e) = genre_label_service::add_alias(db, alias.unwrap(), genre_id.unwrap()).await {
+        log::error!("Error adding alias: {}", e);
+        return HttpResponse::InternalServerError().finish();
+    }
+
+    // Backfill
+    match genre_label_service::backfill_alias(db, alias.unwrap(), &canonical_name).await {
+        Ok(count) => HttpResponse::Ok().json(serde_json::json!({ "updated_tracks": count })),
+        Err(e) => {
+            log::error!("Error backfilling alias: {}", e);
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -1381,181 +1856,434 @@ pub async fn start_backfill_handler(
     state: web::Data<AppState>,
     body: web::Json<serde_json::Value>,
 ) -> HttpResponse {
-    let alias = body
-        .get("alias")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let db = state.db.clone();
+    let alias = body.get("alias").and_then(|v| v.as_str());
     let genre_id = body
         .get("genre_id")
         .and_then(|v| v.as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        .and_then(|s| Uuid::parse_str(s).ok());
+
     if alias.is_none() || genre_id.is_none() {
         return HttpResponse::BadRequest()
             .json(serde_json::json!({"error": "Missing alias or genre_id"}));
     }
 
-    let db = state.db.clone();
-    let session_id = backfill_manager::start_backfill(db, alias.unwrap(), genre_id.unwrap()).await;
-    HttpResponse::Accepted().json(serde_json::json!({"session_id": session_id}))
+    let session_id = backfill_manager::start_backfill(db, alias.unwrap().to_string(), genre_id.unwrap()).await;
+    HttpResponse::Accepted().json(serde_json::json!({ "session_id": session_id }))
 }
 
 pub async fn backfill_progress_stream(path: web::Path<String>) -> HttpResponse {
     let session_id = path.into_inner();
-    if let Some(mut rx) = backfill_manager::subscribe(&session_id).await {
-        let stream = async_stream::stream! {
-            while let Ok(progress) = rx.recv().await {
-                let data = serde_json::to_string(&progress).unwrap_or_default();
-                yield Ok::<_, actix_web::Error>(web::Bytes::from(format!("data: {}\n\n", data)));
-                if progress.finished {
-                    break;
-                }
-            }
-        };
+    let sessions = backfill_manager::get_sessions();
+    let sessions_map = sessions.read().await;
+    if let Some(session) = sessions_map.get(&session_id) {
+        let rx = session.tx.subscribe();
+        drop(sessions_map);
 
-        return HttpResponse::Ok()
-            .insert_header(("Content-Type", "text/event-stream"))
-            .insert_header(("Cache-Control", "no-cache"))
-            .insert_header(("Connection", "keep-alive"))
-            .streaming(stream);
+        return crate::services::sse_helpers::sse_response(rx, |p: &crate::services::backfill_manager::BackfillProgress| {
+            p.finished
+        });
     }
-
-    HttpResponse::NotFound().json(serde_json::json!({"error": "Session not found"}))
+    HttpResponse::NotFound().finish()
 }
 
-/// Start a background job to re-run detection for artists missing cached/canonical genres
 pub async fn reprocess_missing_genres(state: web::Data<AppState>) -> HttpResponse {
     let db = state.db.clone();
     let session_id = reprocess_manager::start_reprocess(db).await;
-    HttpResponse::Accepted().json(serde_json::json!({"session_id": session_id}))
+    HttpResponse::Accepted().json(serde_json::json!({ "session_id": session_id }))
 }
 
 pub async fn reprocess_progress_stream(path: web::Path<String>) -> HttpResponse {
     let session_id = path.into_inner();
-    if let Some(mut rx) = reprocess_manager::subscribe(&session_id).await {
-        let stream = async_stream::stream! {
-            while let Ok(progress) = rx.recv().await {
-                let data = serde_json::to_string(&progress).unwrap_or_default();
-                yield Ok::<_, actix_web::Error>(web::Bytes::from(format!("data: {}\n\n", data)));
-                if progress.finished {
+    let sessions = reprocess_manager::get_sessions();
+    let sessions_map = sessions.read().await;
+    if let Some(session) = sessions_map.get(&session_id) {
+        let rx = session.tx.subscribe();
+        drop(sessions_map);
+
+        return crate::services::sse_helpers::sse_response(rx, |p: &crate::services::reprocess_manager::ReprocessProgress| {
+            p.finished
+        });
+    }
+    HttpResponse::NotFound().finish()
+}
+
+#[derive(serde::Deserialize)]
+pub struct DebugDiscogsRequest {
+    pub artist: Option<String>,
+    pub title: Option<String>,
+    /// If true, returns an HTML page that console.logs the result in the browser
+    pub log: Option<bool>,
+}
+
+/// Admin-only debug endpoint to show which Discogs token source is chosen and a safe token preview.
+pub async fn admin_debug_discogs_lookup(
+    state: web::Data<AppState>,
+    body: web::Json<DebugDiscogsRequest>,
+    _req: HttpRequest,
+) -> HttpResponse {
+    // Determine artist/title
+    let artist = body.artist.clone().unwrap_or_default();
+    let title = body.title.clone().unwrap_or_default();
+
+    // 1) Try DB
+    let mut token_source = "none".to_string();
+    let mut token_opt: Option<String> = None;
+
+    // Try reading token from DB (if metadata_config exists)
+    if let Ok(Some(t)) = sqlx::query_scalar::<_, String>("SELECT discogs_token FROM metadata_config LIMIT 1").fetch_optional(&state.db.pool).await {
+        if !t.trim().is_empty() {
+            token_source = "db".to_string();
+            token_opt = Some(t);
+        }
+    }
+
+    // 2) Env fallback
+    if token_opt.is_none() {
+        if let Ok(env_token) = std::env::var("DISCOGS_TOKEN") {
+            if !env_token.trim().is_empty() {
+                token_source = "env".to_string();
+                token_opt = Some(env_token);
+            }
+        }
+    }
+
+    // 3) Local file fallback
+    if token_opt.is_none() {
+        for path in &["/home/jarno/Homelab/MusicServer/discogs_token", "discogs_token", "../discogs_token"] {
+            if let Ok(s) = std::fs::read_to_string(path) {
+                let t = s.trim().to_string();
+                if !t.is_empty() {
+                    token_source = "file".to_string();
+                    token_opt = Some(t);
                     break;
                 }
             }
-        };
-
-        return HttpResponse::Ok()
-            .insert_header(("Content-Type", "text/event-stream"))
-            .insert_header(("Cache-Control", "no-cache"))
-            .insert_header(("Connection", "keep-alive"))
-            .streaming(stream);
-    }
-
-    HttpResponse::NotFound().json(serde_json::json!({"error": "Session not found"}))
-}
-
-pub async fn list_unmapped_genres(state: web::Data<AppState>) -> HttpResponse {
-    let db = &state.db;
-    match genre_label_service::list_unmapped_tags(&db, 100).await {
-        Ok(tags) => HttpResponse::Ok().json(tags),
-        Err(e) => {
-            log::error!("Error listing unmapped tags: {}", e);
-            HttpResponse::InternalServerError().finish()
         }
     }
+
+    // Build tier1 URL (redacted)
+    let base_url = "https://api.discogs.com";
+    let q_title = title.clone();
+    let q_artist = artist.clone();
+    let mut tier1 = format!("{}/database/search?type=release&release_title={}&artist={}", base_url, url_encode(&q_title), url_encode(&q_artist));
+
+    let token_preview = token_opt.as_ref().map(|t| {
+        if t.len() <= 8 { t.clone() } else { format!("{}...{}", &t[..4], &t[t.len()-4..]) }
+    });
+
+    if token_opt.is_some() {
+        tier1.push_str("&token=REDACTED");
+    }
+
+    let payload = serde_json::json!({
+        "token_source": token_source,
+        "token_preview": token_preview,
+        "tier1_url_redacted": tier1,
+        "artist": artist,
+        "title": title,
+    });
+
+        // small helper to escape HTML when embedding JSON into a page
+        fn escape_html(s: &str) -> String {
+                s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        }
+
+        if body.log.unwrap_or(false) {
+        // Return an HTML page that logs payload to the browser console for convenience
+        let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
+                let js = format!(r#"<!doctype html>
+<html>
+    <head><meta charset='utf-8'/></head>
+    <body>
+        <pre id='payload'>{}</pre>
+        <script>
+            const payload = {};
+            console.log('Discogs debug payload:', payload);
+            document.getElementById('payload').innerText = JSON.stringify(payload, null,  2);
+        </script>
+    </body>
+</html>"#, escape_html(&pretty), serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string()));
+
+        return HttpResponse::Ok()
+            .insert_header((CONTENT_TYPE, "text/html; charset=utf-8"))
+            .body(js);
+    }
+
+    HttpResponse::Ok().json(payload)
 }
 
-// Auto-download config routes
+
+/// Auto-download routes
 pub async fn get_auto_download_config(state: web::Data<AppState>) -> HttpResponse {
     let db = &state.db;
     match auto_download_service::get_config(db).await {
         Ok(config) => HttpResponse::Ok().json(config),
         Err(e) => {
             log::error!("Error getting auto-download config: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
+            HttpResponse::InternalServerError().finish()
         }
     }
 }
 
 pub async fn update_auto_download_config(
     state: web::Data<AppState>,
-    body: web::Json<UpdateAutoDownloadConfigRequest>,
+    req: web::Json<UpdateAutoDownloadConfigRequest>,
 ) -> HttpResponse {
     let db = &state.db;
-    match auto_download_service::update_config(db, body.into_inner()).await {
+    match auto_download_service::update_config(db, req.into_inner()).await {
         Ok(config) => HttpResponse::Ok().json(config),
         Err(e) => {
             log::error!("Error updating auto-download config: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+/// Autoplay config endpoints
+#[derive(serde::Deserialize)]
+pub struct UpdateAutoplayConfigRequest {
+    pub match_time_seconds: i32,
+    pub overlap_seconds: i32,
+    pub exit_time_seconds: i32,
+}
+
+pub async fn get_autoplay_config(state: web::Data<AppState>) -> HttpResponse {
+    let db = &state.db;
+    match crate::services::autoplay_service::get_autoplay_config(db).await {
+        Ok(cfg) => HttpResponse::Ok().json(cfg),
+        Err(e) => {
+            log::error!("Error getting autoplay config: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn update_autoplay_config(
+    state: web::Data<AppState>,
+    req: web::Json<UpdateAutoplayConfigRequest>,
+) -> HttpResponse {
+    let db = &state.db;
+    let body = req.into_inner();
+    match crate::services::autoplay_service::update_autoplay_config(db, body.match_time_seconds, body.overlap_seconds, body.exit_time_seconds).await {
+        Ok(cfg) => HttpResponse::Ok().json(cfg),
+        Err(e) => {
+            log::error!("Error updating autoplay config: {}", e);
+            HttpResponse::InternalServerError().finish()
         }
     }
 }
 
 pub async fn get_auto_download_status(state: web::Data<AppState>) -> HttpResponse {
-    let auto_state = &state.auto_download_state;
-    let current_playlist = auto_state.current_playlist.read().await.clone();
+    let db = &state.db;
+    let config = match auto_download_service::get_config(db).await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Error getting config for status: {}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let state_lock = &state.auto_download_state;
+    let current_playlist = state_lock.current_playlist.read().await.clone();
     
-    HttpResponse::Ok().json(serde_json::json!({
-        "is_running": auto_state.is_running.load(std::sync::atomic::Ordering::Relaxed),
-        "current_playlist": current_playlist,
-        "downloads_completed": auto_state.downloads_completed.load(std::sync::atomic::Ordering::Relaxed),
-        "downloads_skipped": auto_state.downloads_skipped.load(std::sync::atomic::Ordering::Relaxed),
-        "downloads_in_progress": auto_state.downloads_in_progress.load(std::sync::atomic::Ordering::Relaxed),
-    }))
+    HttpResponse::Ok().json(crate::models::AutoDownloadStatus {
+        config,
+        is_running: state_lock.is_running.load(std::sync::atomic::Ordering::Relaxed),
+        current_playlist,
+        downloads_in_progress: state_lock.downloads_in_progress.load(std::sync::atomic::Ordering::Relaxed),
+        downloads_completed_this_run: state_lock.downloads_completed.load(std::sync::atomic::Ordering::Relaxed),
+        downloads_skipped_this_run: state_lock.downloads_skipped.load(std::sync::atomic::Ordering::Relaxed),
+    })
 }
 
 pub async fn trigger_auto_download(state: web::Data<AppState>) -> HttpResponse {
-    let db = &state.db;
-    let sessions = &state.download_sessions;
-    let auto_state = state.auto_download_state.clone();
+    let pool = &state.db.pool;
+    let sessions = state.download_sessions.clone();
+    let ad_state = state.auto_download_state.clone();
+    let update_tx = state.cache_update_tx.clone();
     
-    match auto_download_service::trigger_now(&db.pool, sessions, auto_state).await {
-        Ok(msg) => HttpResponse::Accepted().json(serde_json::json!({"message": msg})),
-        Err(e) => {
-            log::error!("Error triggering auto-download: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({"error": e}))
-        }
+    match auto_download_service::trigger_now(pool, &sessions, ad_state, Some(update_tx)).await {
+        Ok(msg) => HttpResponse::Ok().json(serde_json::json!({ "message": msg })),
+        Err(e) => HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
     }
 }
 
 pub async fn stop_auto_download(state: web::Data<AppState>) -> HttpResponse {
     auto_download_service::stop_current_run(&state.auto_download_state);
-    HttpResponse::Ok().json(serde_json::json!({"message": "Stop signal sent"}))
+    HttpResponse::Ok().json(serde_json::json!({ "message": "Stop signal sent" }))
 }
 
-// Bulk operations routes
 pub async fn bulk_rename_by_regex_handler(
     state: web::Data<AppState>,
-    payload: web::Json<BulkRenameByRegexRequest>,
+    req: web::Json<BulkRenameByRegexRequest>,
 ) -> HttpResponse {
     let db = &state.db;
-    match music_service::bulk_rename_by_regex(&db, payload.into_inner()).await {
-        Ok(result) => {
-            log::info!("Bulk rename completed: {} files updated", result.updated_count);
-            HttpResponse::Ok().json(result)
-        }
+    match music_service::bulk_rename_by_regex(db, req.into_inner()).await {
+        Ok(resp) => HttpResponse::Ok().json(resp),
         Err(e) => {
-            log::error!("Error in bulk rename: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({
-                "error": e.to_string()
-            }))
+            log::error!("Bulk rename error: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": e.to_string() }))
         }
     }
 }
 
 pub async fn bulk_add_to_playlist_by_regex_handler(
     state: web::Data<AppState>,
-    payload: web::Json<BulkAddToPlaylistByRegexRequest>,
+    req: web::Json<BulkAddToPlaylistByRegexRequest>,
 ) -> HttpResponse {
     let db = &state.db;
-    match music_service::bulk_add_to_playlist_by_regex(&db, payload.into_inner()).await {
-        Ok(result) => {
-            log::info!("Bulk add to playlist completed: {} tracks added", result.added_count);
-            HttpResponse::Ok().json(result)
+    let playlist_id = req.playlist_id;
+    match music_service::bulk_add_to_playlist_by_regex(db, req.into_inner()).await {
+        Ok(resp) => {
+            // Notify clients that a playlist has changed
+            let payload = serde_json::json!({ "id": playlist_id });
+            let _ = crate::services::cache_service::notify_change(
+                state.get_ref(),
+                "playlist_items_updated",
+                payload
+            ).await;
+            HttpResponse::Ok().json(resp)
+        },
+        Err(e) => {
+            log::error!("Bulk add to playlist error: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": e.to_string() }))
+        }
+    }
+}
+
+pub async fn bulk_update_music_handler(
+    state: web::Data<AppState>,
+    req: web::Json<crate::models::BulkUpdateMusicRequest>,
+) -> HttpResponse {
+    let db = &state.db;
+    match music_service::bulk_update_music(db, req.into_inner()).await {
+        Ok(count) => {
+            if count > 0 {
+                let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+                let payload_val = serde_json::json!({"updated_count": count});
+                let _ = crate::services::cache_service::notify_change(state.get_ref(), "music_bulk_updated", payload_val).await;
+            }
+            HttpResponse::Ok().json(serde_json::json!({ "updated_count": count }))
+        },
+        Err(e) => {
+            log::error!("Bulk update error: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": e.to_string() }))
+        }
+    }
+}
+
+/// Metadata configuration routes
+pub async fn get_metadata_config(state: web::Data<AppState>) -> HttpResponse {
+    let db = &state.db;
+    match MetadataConfig::get_config(&db.pool).await {
+        Ok(config) => HttpResponse::Ok().json(config),
+        Err(e) => {
+            log::error!("Error getting metadata config: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn update_metadata_config(
+    state: web::Data<AppState>,
+    body: web::Json<UpdateMetadataConfigRequest>,
+) -> HttpResponse {
+    let db = &state.db;
+       match MetadataConfig::update_config(&db.pool, body.into_inner()).await {
+        Ok(config) => HttpResponse::Ok().json(config),
+        Err(e) => {
+            log::error!("Error updating metadata config: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn detect_bpm_handler(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let db = &state.db;
+
+    // Get the music file record to find the path
+    let file = match music_service::get_music_file(db, id).await {
+        Ok(Some(file)) => file,
+        Ok(None) => return HttpResponse::NotFound().json(serde_json::json!({"error": "Music file not found"})),
+        Err(e) => {
+            log::error!("Error fetching music file {}: {}", id, e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}));
+        }
+    };
+
+    // Run BPM detection
+    // Note: This operation might take a few seconds, it's blocking if not careful.
+    // Command::output blocks the thread, but it's okay for a short task in a handler if concurrency isn't massive.
+    // For better perf, we should use tokio::process::Command or spawn_blocking.
+    // Since bpm_service::detect_bpm uses std::process::Command, we should wrap it in spawn_blocking.
+    
+    let file_path = file.file_path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        bpm_service::detect_bpm(&file_path)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(bpm_res)) => {
+            // Update the music file with the detected BPM, offset, and beat map
+            let update_req = UpdateMusicFileRequest {
+                bpm: Some(bpm_res.bpm),
+                beat_grid_offset: Some(bpm_res.offset),
+                beat_map: Some(serde_json::to_value(&bpm_res.beats).unwrap_or(serde_json::Value::Null)),
+                ..Default::default()
+            };
+            
+            match music_service::update_music_file(db, id, update_req).await {
+                Ok(Some(updated_file)) => {
+                    // Update cache
+                    let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
+                    let _ = crate::services::cache_service::notify_change(state.get_ref(), "music_updated", serde_json::to_value(&updated_file).unwrap_or(serde_json::Value::Null)).await;
+                    HttpResponse::Ok().json(serde_json::json!({ "bpm": bpm_res.bpm, "offset": bpm_res.offset, "track": updated_file }))
+                },
+                Ok(None) => HttpResponse::NotFound().json(serde_json::json!({"error": "Music file not found during update"})),
+                Err(e) => {
+                    log::error!("Error update music file with BPM {}: {}", id, e);
+                    HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
+                }
+            }
+        }
+        Ok(Err(e)) => {
+            log::error!("BPM detection failed for {}: {}", file.id, e);
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
         }
         Err(e) => {
-            log::error!("Error in bulk add to playlist: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({
-                "error": e.to_string()
-            }))
+            log::error!("Task join error: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn reorder_playlist_tracks(
+    state: web::Data<AppState>,
+    path: web::Path<Uuid>,
+    payload: web::Json<ReorderPlaylistTracksRequest>,
+) -> HttpResponse {
+    let playlist_id = path.into_inner();
+    let db = &state.db;
+    match playlist_service::reorder_tracks(db, playlist_id, payload.music_file_ids.clone()).await {
+        Ok(_) => {
+            // Notify clients that tracks were reordered
+            let payload_val = serde_json::json!({ "id": playlist_id });
+            let _ = crate::services::cache_service::notify_change(
+                state.get_ref(),
+                "playlist_items_updated",
+                payload_val
+            ).await;
+            HttpResponse::NoContent().finish()
+        },
+        Err(e) => {
+            log::error!("Error reordering tracks for playlist {}: {}", playlist_id, e);
+            HttpResponse::InternalServerError().finish()
         }
     }
 }

@@ -13,7 +13,7 @@
           Clear completed
         </button>
         <button class="btn btn-primary" :disabled="!canUpload || uploading" @click="startUpload">
-          {{ uploading ? 'Uploading…' : 'Start upload' }}
+          {{ uploading ? 'Uploading&hellip;' : 'Start upload' }}
         </button>
       </div>
     </header>
@@ -96,7 +96,7 @@
             <div>
               <p class="file-name">{{ item.file.name }}</p>
               <p class="file-meta">
-                {{ formatBytes(item.file.size) }} · {{ itemStatusLabel(item.status) }}
+                {{ formatBytes(item.file.size) }} &middot; {{ itemStatusLabel(item.status) }}
               </p>
             </div>
           </div>

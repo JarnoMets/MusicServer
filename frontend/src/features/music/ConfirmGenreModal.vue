@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { MusicFile } from '../../types/MusicTab'
+import type { MusicFile } from '../../types'
 import Icon from '../../shared/components/Icons.vue'
 import { musicAPI } from '../../api/music'
 
@@ -106,7 +106,7 @@ const handleClose = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2000;
   animation: fadeIn 0.2s ease;
 }
 

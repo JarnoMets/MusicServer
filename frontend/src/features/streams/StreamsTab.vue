@@ -117,8 +117,10 @@
         :key="stream.id" 
         class="stream-card"
         :class="{ 'is-playing': isStreamPlaying(stream) }"
+        @click="openStreamDetail(stream)"
+        @contextmenu.prevent="openContextMenu(stream, $event)"
       >
-        <button class="stream-play" @click="playStream(stream)" :title="isStreamPlaying(stream) ? 'Now Playing' : 'Play'">
+        <button class="stream-play" @click.stop="playStream(stream)" :title="isStreamPlaying(stream) ? 'Now Playing' : 'Play'">
           <span v-if="isStreamPlaying(stream)" class="play-icon playing">
             <span class="bar"></span>
             <span class="bar"></span>
@@ -159,7 +161,56 @@
         <Icon name="plus" :size="16" /> Add Your First Stream
       </button>
     </div>
+    
+    <!-- Stream Context Menu -->
+    <StreamContextMenu
+      ref="streamContextMenu"
+      :is-admin="canEdit"
+      @play="playStream"
+      @details="openStreamDetail"
+      @edit="editStream"
+      @delete="confirmDelete"
+      @copy-url="copyStreamUrl"
+    />
   </div>
+
+    <!-- Stream Detail View -->
+    <div v-if="selectedStream" class="stream-detail">
+      <header class="detail-header">
+        <button class="btn-back" @click="closeStreamDetail">
+          <Icon name="arrow-left" :size="20" />
+          <span>Back to Streams</span>
+        </button>
+        <div class="detail-title-section">
+          <div class="playlist-icon large">
+            <Icon name="radio" :size="32" />
+          </div>
+          <div>
+            <h2>{{ selectedStream.name }}</h2>
+            <p v-if="selectedStream.description" class="detail-description">{{ selectedStream.description }}</p>
+            <div class="detail-meta">
+              <span v-if="selectedStream.genre">{{ selectedStream.genre }}</span>
+              <span v-if="selectedStream.url">&bull;</span>
+              <span v-if="selectedStream.url" class="stream-url" :title="selectedStream.url">{{ truncateUrl(selectedStream.url) }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn btn-primary" @click="playStream(selectedStream)">
+            <Icon name="play" :size="16" /> Play
+          </button>
+          <button v-if="canEdit" class="btn btn-secondary" @click="editStream(selectedStream)">
+            <Icon name="edit" :size="16" /> Edit
+          </button>
+          <button v-if="canEdit" class="btn btn-danger" @click="confirmDelete(selectedStream)">
+            <Icon name="trash" :size="16" /> Delete
+          </button>
+          <button class="btn btn-secondary" @click="copyStreamUrl(selectedStream)">
+            <Icon name="copy" :size="16" /> Copy URL
+          </button>
+        </div>
+      </header>
+    </div>
 </template>
 
 <script setup lang="ts">
@@ -170,6 +221,7 @@ import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { useAuth } from '../../composables/useAuth'
 import Icon from '../../shared/components/Icons.vue'
+import StreamContextMenu from './StreamContextMenu.vue'
 
 interface Props {
   canEdit?: boolean
@@ -197,6 +249,7 @@ const loading = ref(false)
 const saving = ref(false)
 const showAddForm = ref(false)
 const editingStream = ref<InternetStream | null>(null)
+const selectedStream = ref<InternetStream | null>(null)
 const searchQuery = ref('')
 const sortBy = ref<'name-asc' | 'name-desc' | 'created-desc' | 'created-asc'>('name-asc')
 
@@ -210,6 +263,7 @@ const formData = ref({
 const { playInternetStream, state: playerState } = usePlayer()
 const { success, error } = useToast()
 const { confirm } = useConfirm()
+const streamContextMenu = ref<InstanceType<any> | null>(null)
 
 const debouncedSearch = () => {
   // Filter is reactive, no action needed
@@ -346,6 +400,42 @@ const playStream = (stream: InternetStream) => {
     url: stream.url, 
     genre: stream.genre 
   })
+}
+
+const openStreamDetail = async (stream: InternetStream) => {
+  // simply set selected stream; if later we need to fetch more details we can
+  selectedStream.value = stream
+}
+
+const closeStreamDetail = () => {
+  selectedStream.value = null
+  // refresh list in case changes were made
+  fetchStreams()
+}
+
+const openContextMenu = (stream: InternetStream, event: MouseEvent) => {
+  if (streamContextMenu.value) streamContextMenu.value.open(stream, event)
+}
+
+const copyStreamUrl = async (stream: InternetStream) => {
+  try {
+    if (navigator && navigator.clipboard && stream.url) {
+      await navigator.clipboard.writeText(stream.url)
+      success('Copied', 'Stream URL copied to clipboard')
+    } else {
+      // Fallback: create a temporary input
+      const input = document.createElement('input')
+      input.value = stream.url || ''
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      success('Copied', 'Stream URL copied to clipboard')
+    }
+  } catch (err: any) {
+    console.error('Failed to copy URL', err)
+    error('Failed to copy URL')
+  }
 }
 
 const truncateUrl = (url: string) => {
@@ -871,15 +961,17 @@ onMounted(() => {
 }
 
 /* Responsive */
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .header {
     flex-direction: column;
     align-items: stretch;
+    gap: 16px;
   }
 
   .header-actions {
     flex-direction: column;
-    gap: 10px;
+    align-items: stretch;
+    gap: 12px;
   }
 
   .search-box {
@@ -900,17 +992,44 @@ onMounted(() => {
   }
 
   .stream-card {
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 24px 16px;
+    gap: 16px;
+  }
+
+  .stream-play {
+    width: 64px;
+    height: 64px;
   }
 
   .stream-info {
-    order: 1;
     width: 100%;
-    margin-top: 12px;
+  }
+
+  .stream-meta {
+    justify-content: center;
   }
 
   .stream-actions {
-    margin-left: auto;
+    width: 100%;
+    justify-content: center;
+    border-top: 1px solid var(--border-color);
+    padding-top: 16px;
+  }
+
+  .btn-icon {
+    flex: 1;
+    height: 44px;
+  }
+
+  .modal-content {
+    max-width: 100%;
+    margin: 0;
+    border-radius: 20px 20px 0 0;
+    position: fixed;
+    bottom: 0;
   }
 }
 </style>

@@ -15,6 +15,11 @@ pub struct MusicFile {
     pub file_path: String,
     pub track_number: Option<i32>,
     pub file_hash: Option<String>,
+    pub bpm: Option<f64>,
+    pub initial_key: Option<String>,
+    pub beat_grid_offset: Option<f64>,
+    pub beat_map: Option<serde_json::Value>,
+    pub metadata_analyzed: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -31,6 +36,11 @@ pub struct CreateMusicFileRequest {
     pub file_path: String,
     pub track_number: Option<i32>,
     pub file_hash: Option<String>,
+    pub bpm: Option<f64>,
+    pub initial_key: Option<String>,
+    pub beat_grid_offset: Option<f64>,
+    pub beat_map: Option<serde_json::Value>,
+    pub metadata_analyzed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -43,6 +53,11 @@ pub struct UpdateMusicFileRequest {
     pub release_date: Option<DateTime<Utc>>,
     pub duration: Option<i32>,
     pub track_number: Option<i32>,
+    pub bpm: Option<f64>,
+    pub initial_key: Option<String>,
+    pub beat_grid_offset: Option<f64>,
+    pub beat_map: Option<serde_json::Value>,
+    pub metadata_analyzed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -56,6 +71,8 @@ pub struct MusicQueryParams {
     pub offset: Option<i64>,
     /// Filter to only show unconfirmed genres (guessed_genre set but genre not set)
     pub unconfirmed_only: Option<bool>,
+    /// Filter to only show music missing metadata (genre or release_date or album)
+    pub missing_metadata: Option<bool>,
 }
 
 /// Artist summary with genre and song count
@@ -100,4 +117,30 @@ pub struct BulkAddToPlaylistByRegexRequest {
 pub struct BulkAddToPlaylistResponse {
     pub added_count: i32,
     pub total_playlist_count: i64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct BulkUpdateMusicRequest {
+    pub ids: Vec<Uuid>,
+    pub genre: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub release_date: Option<DateTime<Utc>>,
+    pub bpm: Option<f64>,
+    pub initial_key: Option<String>,
+    pub clear_bpm: Option<bool>,
+    pub clear_key: Option<bool>,
+    pub clear_beat_map: Option<bool>,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize)]
+pub struct BulkUpdateResponse {
+    pub success_count: usize,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CutAudioRequest {
+    pub start: f64,
+    pub end: f64,
 }

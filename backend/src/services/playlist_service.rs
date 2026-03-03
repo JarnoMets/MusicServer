@@ -2,6 +2,8 @@ use crate::db::Database;
 use crate::models::{Playlist, PlaylistSummary, PlaylistTrackRequest, PlaylistWithItems, UpdatePlaylistRequest};
 use sqlx::QueryBuilder;
 use uuid::Uuid;
+use crate::services::audit_service;
+use crate::models::audit::CreateAuditLogRequest;
 
 #[allow(dead_code)]
 pub struct PlaylistService;
@@ -89,6 +91,14 @@ pub async fn update_playlist(
     id: Uuid,
     payload: UpdatePlaylistRequest,
 ) -> Result<Option<Playlist>, sqlx::Error> {
+    // Get old playlist for audit log
+    let old_playlist = get_playlist(db, id).await?;
+    if old_playlist.is_none() {
+        return Ok(None);
+    }
+    let old_playlist = old_playlist.unwrap();
+    let old_values = serde_json::to_value(&old_playlist).unwrap_or(serde_json::Value::Null);
+
     let mut builder = QueryBuilder::new("UPDATE playlists SET ");
     let mut separated = builder.separated(", ");
 
@@ -106,10 +116,26 @@ pub async fn update_playlist(
     builder.push_bind(id);
     builder.push(" RETURNING id, name, description, created_at, updated_at");
 
-    builder
+    let updated_playlist = builder
         .build_query_as::<Playlist>()
         .fetch_optional(&db.pool)
-        .await
+        .await?;
+
+    if let Some(new_playlist) = &updated_playlist {
+        let new_values = serde_json::to_value(new_playlist).unwrap_or(serde_json::Value::Null);
+
+        // Record audit log
+        let _ = audit_service::create_audit_log(db, CreateAuditLogRequest {
+            table_name: "playlists".to_string(),
+            record_id: id,
+            action: "UPDATE".to_string(),
+            old_values: Some(old_values),
+            new_values: Some(new_values),
+            user_id: None,
+        }).await;
+    }
+
+    Ok(updated_playlist)
 }
 
 pub async fn get_playlist_with_items(
@@ -118,7 +144,7 @@ pub async fn get_playlist_with_items(
 ) -> Result<Option<PlaylistWithItems>, sqlx::Error> {
     if let Some(playlist) = get_playlist(db, id).await? {
         let items = sqlx::query_as::<_, crate::models::MusicFile>(
-            "SELECT mf.id, mf.title, mf.artist, mf.album, mf.genre, mf.guessed_genre, mf.release_date, mf.duration, mf.file_path, mf.track_number, mf.created_at, mf.updated_at
+            "SELECT mf.id, mf.title, mf.artist, mf.album, mf.genre, mf.guessed_genre, mf.release_date, mf.duration, mf.file_path, mf.track_number, mf.file_hash, mf.bpm, mf.initial_key, mf.beat_grid_offset, mf.beat_map, mf.metadata_analyzed, mf.created_at, mf.updated_at
              FROM playlist_items pi
              JOIN music_files mf ON mf.id = pi.music_file_id
              WHERE pi.playlist_id = $1
@@ -146,6 +172,7 @@ pub async fn add_track_to_playlist(
     playlist_id: Uuid,
     payload: PlaylistTrackRequest,
 ) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now();
     let position = if let Some(pos) = payload.position {
         pos
     } else {
@@ -160,14 +187,22 @@ pub async fn add_track_to_playlist(
     };
 
     sqlx::query(
-        "INSERT INTO playlist_items (id, playlist_id, music_file_id, position, created_at) VALUES ($1, $2, $3, $4, NOW())",
+        "INSERT INTO playlist_items (id, playlist_id, music_file_id, position, created_at) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(Uuid::new_v4())
     .bind(playlist_id)
     .bind(payload.music_file_id)
     .bind(position)
+    .bind(now)
     .execute(&db.pool)
     .await?;
+
+    // Update the playlist's updated_at timestamp
+    sqlx::query("UPDATE playlists SET updated_at = $1 WHERE id = $2")
+        .bind(now)
+        .bind(playlist_id)
+        .execute(&db.pool)
+        .await?;
 
     Ok(())
 }
@@ -177,10 +212,57 @@ pub async fn remove_track_from_playlist(
     playlist_id: Uuid,
     music_file_id: Uuid,
 ) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now();
     sqlx::query("DELETE FROM playlist_items WHERE playlist_id = $1 AND music_file_id = $2")
         .bind(playlist_id)
         .bind(music_file_id)
         .execute(&db.pool)
         .await?;
+    
+    // Update the playlist's updated_at timestamp
+    sqlx::query("UPDATE playlists SET updated_at = $1 WHERE id = $2")
+        .bind(now)
+        .bind(playlist_id)
+        .execute(&db.pool)
+        .await?;
+
     Ok(())
 }
+
+    pub async fn reorder_tracks(
+    db: &Database,
+    playlist_id: Uuid,
+    music_file_ids: Vec<Uuid>,
+) -> Result<(), sqlx::Error> {
+    let mut tx = db.pool.begin().await?;
+
+        // 1. Temporarily null out positions to avoid unique constraint violations
+        sqlx::query("UPDATE playlist_items SET position = -1 * (position + 1000) WHERE playlist_id = $1")
+            .bind(playlist_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // 2. Clear out any items that are NOT in our new list (optional, but good for sync)
+        sqlx::query("DELETE FROM playlist_items WHERE playlist_id = $1 AND music_file_id NOT IN (SELECT * FROM UNNEST($2::uuid[]))")
+            .bind(playlist_id)
+            .bind(&music_file_ids)
+            .execute(&mut *tx)
+            .await?;
+
+        // 3. Update each item with its new position
+        for (index, music_file_id) in music_file_ids.iter().enumerate() {
+            sqlx::query(
+                "UPDATE playlist_items 
+                 SET position = $1 
+                 WHERE playlist_id = $2 AND music_file_id = $3"
+            )
+            .bind(index as i32)
+            .bind(playlist_id)
+            .bind(music_file_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }

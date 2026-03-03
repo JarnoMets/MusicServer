@@ -145,6 +145,7 @@ pub fn start_scheduler(
     pool: PgPool,
     download_sessions: DownloadSessions,
     state: Arc<AutoDownloadState>,
+    update_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
 ) {
     tokio::spawn(async move {
         log::info!("Auto-download scheduler started");
@@ -205,6 +206,7 @@ pub fn start_scheduler(
                 &download_sessions,
                 &config,
                 state.clone(),
+                Some(update_tx.clone()),
             ).await {
                 log::error!("Auto-download error: {}", e);
             }
@@ -247,6 +249,7 @@ async fn run_auto_download(
     download_sessions: &DownloadSessions,
     config: &AutoDownloadConfig,
     state: Arc<AutoDownloadState>,
+    update_tx: Option<tokio::sync::broadcast::Sender<serde_json::Value>>,
 ) -> Result<(), String> {
     // Get all playlists with auto_download enabled
     let playlists: Vec<YoutubePlaylist> = sqlx::query_as(
@@ -290,6 +293,7 @@ async fn run_auto_download(
             Some(options),
             download_sessions.clone(),
             pool.clone(),
+            update_tx.clone(),
         ).await {
             Ok(session_id) => {
                 log::info!("Started download session {} for playlist {}", session_id, playlist.name);
@@ -354,6 +358,7 @@ pub async fn trigger_now(
     pool: &PgPool,
     download_sessions: &DownloadSessions,
     state: Arc<AutoDownloadState>,
+    update_tx: Option<tokio::sync::broadcast::Sender<serde_json::Value>>,
 ) -> Result<String, String> {
     if state.is_running.load(Ordering::Relaxed) {
         return Err("Auto-download is already running".to_string());
@@ -370,7 +375,7 @@ pub async fn trigger_now(
     let state_clone = state.clone();
     
     tokio::spawn(async move {
-        if let Err(e) = run_auto_download(&pool, &sessions, &config, state_clone.clone()).await {
+        if let Err(e) = run_auto_download(&pool, &sessions, &config, state_clone.clone(), update_tx).await {
             log::error!("Manual auto-download trigger error: {}", e);
         }
         

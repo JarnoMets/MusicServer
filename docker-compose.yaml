@@ -25,8 +25,14 @@ services:
     ports:
       - "8081:8081"
     environment:
-      - RUST_LOG=info
+      # Default to WARN to reduce log volume; override with RUST_LOG env when needed
+      - RUST_LOG=warn,sqlx=warn,sqlx::query=warn
       - DATABASE_URL=postgres://postgresuser:postgrespwd@postgres:5432/musicdb
+      - GOOGLE_CLIENT_ID=584501599293-v853k7gg70sl3cec009o1qqk290415kb.apps.googleusercontent.com
+      - GOOGLE_CLIENT_SECRET=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
+      - JWT_SECRET=8e8c8d8f8a8b8c8d8e8f8a8b8c8d8e8f8a8b8c8d8e8f8a8b8c8d8e8f8a8b8c8d
+      - APP_URL=https://music.jarnomets.com
+      - DISCOGS_TOKEN=${DISCOGS_TOKEN:-}
     restart: unless-stopped
     depends_on:
       postgres:

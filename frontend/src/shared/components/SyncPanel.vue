@@ -17,7 +17,7 @@
 <script lang="ts">
 import { defineComponent, ref } from 'vue'
 import { musicAPI } from '@/api/music'
-import { getAPIBaseURL } from '@/utils/api'
+import { buildSSEURL } from '@/utils/api'
 
 export default defineComponent({
   name: 'SyncPanel',
@@ -38,8 +38,9 @@ export default defineComponent({
         const res = await musicAPI.syncMusicFolder(folder.value || undefined)
         sessionId.value = res.data.session_id
         if (sessionId.value) {
-          const apiBaseUrl = getAPIBaseURL()
-          evt = new EventSource(`${apiBaseUrl}/music/sync/stream/${sessionId.value}`)
+          // Use buildSSEURL so the auth token is appended when present
+          const streamUrl = buildSSEURL(`/music/sync/stream/${sessionId.value}`)
+          evt = new EventSource(streamUrl)
           evt.onmessage = (e) => {
             try {
               const d = JSON.parse(e.data)
@@ -62,7 +63,9 @@ export default defineComponent({
           status.value = 'Sync started (no session)'
           running.value = false
         }
-      } catch (e) {
+      } catch (err) {
+        // Log the error for debugging and avoid unused-parameter lint warnings
+        console.warn('Error starting sync', err)
         status.value = 'Error starting sync'
         running.value = false
       }
@@ -72,8 +75,8 @@ export default defineComponent({
       if (!sessionId.value) return
       try {
         await musicAPI.cancelSync(sessionId.value)
-      } catch (e) {
-        console.warn('Cancel request failed', e)
+      } catch (err) {
+        console.warn('Cancel request failed', err)
       }
       stopStream()
     }

@@ -1,10 +1,20 @@
 # Build stage
-FROM rust:1.86-slim as builder
+FROM rust:1.92 as builder
 
 WORKDIR /app
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libaubio-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy manifests
 COPY Cargo.toml Cargo.lock* ./
+
+# Copy build script so the release build inside the image can run the build.rs
+COPY build.rs ./
 
 # Migrations are now implemented programmatically in the Rust code (see src/db/schema.rs)
 # By default the backend runs programmatic migrations at startup. To opt-out, set
@@ -15,10 +25,14 @@ COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
 
 # Build the application
-RUN cargo build --release
+RUN CFLAGS="-D_GNU_SOURCE" cargo build --release
 
-# Runtime stage
-FROM debian:bookworm-slim
+# Runtime stage: use a stable base
+## Use the same Rust slim base for runtime to ensure compatible glibc
+## (quick fix for containers where the built binary requires a newer glibc
+## than the minimal runtime image provides). This increases image size but
+## avoids GLIBC mismatches when the builder and runtime differ.
+FROM rust:1.92-slim as runtime
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -28,6 +42,9 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     ffmpeg \
+    libaubio5 \
+    aubio-tools \
+    bpm-tools \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages yt-dlp
 

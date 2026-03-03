@@ -30,3 +30,23 @@ export const buildAPIURL = (endpoint: string): string => {
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
   return `${base}${path}`
 }
+
+/**
+ * Build a URL intended for Server-Sent Events (EventSource).
+ * EventSource can't set custom headers, so we append the stored auth token
+ * as a `token` query parameter when available. This keeps endpoints protected
+ * while allowing SSE connections from the frontend.
+ */
+export const buildSSEURL = (endpoint: string): string => {
+  const url = buildAPIURL(endpoint)
+  try {
+    const token = localStorage.getItem('music_auth_token')
+    if (token) {
+      const sep = url.includes('?') ? '&' : '?'
+      return `${url}${sep}token=${encodeURIComponent(token)}`
+    }
+  } catch {
+    // localStorage might not be available in some contexts; fall back to plain URL
+  }
+  return url
+}

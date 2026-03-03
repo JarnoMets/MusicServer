@@ -20,6 +20,25 @@ pub struct Genre {
     pub updated_at: DateTime<Utc>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
+pub struct GenreLabel {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GenreWithAliases {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub aliases: Vec<String>,
+    pub track_count: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DetectGenreRequest {
     pub artist_name: String,

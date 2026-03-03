@@ -4,278 +4,532 @@
       <h2>YouTube Downloader</h2>
     </div>
 
-    <!-- Saved Playlists Section -->
-    <div class="saved-playlists-section">
-      <div class="form-card">
-        <div class="section-header">
-          <h3>Saved YouTube Playlists</h3>
-          <button class="btn btn-small btn-primary" @click="showAddPlaylistModal = true">
-            <Icon name="plus" :size="16" />
-            Add Playlist
-          </button>
-        </div>
-        
-        <div v-if="loadingPlaylists" class="loading">Loading playlists...</div>
-        <div v-else-if="savedPlaylists.length === 0" class="empty">
-          <p>No saved playlists. Add a YouTube playlist to enable auto-download.</p>
-        </div>
-        <div v-else class="playlists-grid">
-          <div v-for="playlist in savedPlaylists" :key="playlist.id" class="playlist-card">
-            <div class="playlist-info">
-              <div class="playlist-name">{{ playlist.name }}</div>
-              <div class="playlist-url">{{ playlist.url }}</div>
-              <div v-if="playlist.description" class="playlist-desc">{{ playlist.description }}</div>
-              <div class="playlist-meta">
-                <span v-if="playlist.lastSyncedAt" class="last-sync">
-                  Last synced: {{ formatDate(playlist.lastSyncedAt) }}
-                </span>
-                <span v-else class="last-sync never">Never synced</span>
+    <!-- Tab Navigation -->
+    <div class="tabs-nav">
+      <button 
+        class="tab-btn" 
+        :class="{ active: activeTab === 'status' }" 
+        @click="activeTab = 'status'"
+      >
+        <div class="tab-indicator"></div>
+        <Icon name="activity" :size="18" />
+        <span>Status</span>
+      </button>
+      <button 
+        class="tab-btn" 
+        :class="{ active: activeTab === 'download' }" 
+        @click="activeTab = 'download'"
+      >
+        <div class="tab-indicator"></div>
+        <Icon name="download" :size="18" />
+        <span>Manual Download</span>
+      </button>
+      <button 
+        class="tab-btn" 
+        :class="{ active: activeTab === 'playlists' }" 
+        @click="activeTab = 'playlists'"
+      >
+        <div class="tab-indicator"></div>
+        <Icon name="list" :size="18" />
+        <span>Playlists</span>
+      </button>
+      <button 
+        class="tab-btn" 
+        :class="{ active: activeTab === 'config' }" 
+        @click="activeTab = 'config'"
+      >
+        <div class="tab-indicator"></div>
+        <Icon name="settings" :size="18" />
+        <span>Maintenance</span>
+      </button>
+      <button 
+        class="tab-btn" 
+        :class="{ active: activeTab === 'history' }" 
+        @click="activeTab = 'history'"
+      >
+        <div class="tab-indicator"></div>
+        <Icon name="history" :size="18" />
+        <span>History</span>
+      </button>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="tab-content">
+      <!-- Status Tab -->
+      <div v-if="activeTab === 'status'" class="tab-pane fade-in">
+        <div class="status-layout">
+          <div class="main-status-area">
+            <!-- Active Process Card -->
+            <div class="glass-card status-hero" :class="{ 'execution-active': autoDownloadStatus?.is_running || isDownloading }">
+              <div class="hero-top">
+                <div class="hero-info">
+                  <h3>System Engine</h3>
+                  <p v-if="autoDownloadStatus?.is_running">Auto-downloader is currently processing playlists.</p>
+                  <p v-else-if="isDownloading">Manual download session is active.</p>
+                  <p v-else>All systems stand-by. Ready for new tasks.</p>
+                </div>
+                <div class="engine-state">
+                  <div class="pulse-ring" v-if="autoDownloadStatus?.is_running || isDownloading"></div>
+                  <div class="state-label" :class="{ active: autoDownloadStatus?.is_running || isDownloading }">
+                    {{ (autoDownloadStatus?.is_running || isDownloading) ? 'Active' : 'Idle' }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="hero-actions">
+                <button 
+                  v-if="!autoDownloadStatus?.is_running"
+                  class="btn btn-primary" 
+                  @click="triggerAutoDownload"
+                  :disabled="!autoDownloadConfig?.enabled"
+                >
+                  <Icon name="play" :size="20" />
+                  Run Auto-sync Now
+                </button>
+                <button 
+                  v-else
+                  class="btn btn-danger" 
+                  @click="stopAutoDownload"
+                >
+                  <Icon name="square" :size="20" />
+                  Abort Operation
+                </button>
+
+                <button 
+                  class="btn btn-secondary-blur" 
+                  @click="processDownloads"
+                  :disabled="isProcessingDownloads"
+                >
+                  <Icon name="refresh-cw" :size="18" :class="{ spinning: isProcessingDownloads }" />
+                  Rescan Local Storage
+                </button>
+              </div>
+
+              <!-- Animated progress if active -->
+              <div v-if="autoDownloadStatus?.is_running" class="execution-details">
+                <div class="exec-playlist">
+                   <Icon name="youtube" :size="20" color="#ff0000" />
+                   <span class="p-name">{{ autoDownloadStatus.current_playlist || 'Negotiating with YouTube...' }}</span>
+                </div>
+                
+                <div class="exec-stats-grid">
+                  <div class="exec-stat">
+                    <span class="val">{{ autoDownloadStatus.downloads_completed }}</span>
+                    <span class="lbl">Succeeded</span>
+                  </div>
+                  <div class="exec-stat">
+                    <span class="val">{{ autoDownloadStatus.downloads_in_progress }}</span>
+                    <span class="lbl">Concurrent</span>
+                  </div>
+                  <div class="exec-stat">
+                    <span class="val">{{ autoDownloadStatus.downloads_skipped }}</span>
+                    <span class="lbl">Redundant</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="isDownloading" class="manual-execution-details">
+                <div class="divider"></div>
+                <div class="manual-info">
+                   <div class="info-text">
+                      <span class="title">Manual Task: {{ currentProgress.currentItem?.title || 'Unknown' }}</span>
+                      <span class="subtext">{{ currentProgress.message }}</span>
+                   </div>
+                   <div class="progress-info">
+                      <span class="percent">{{ currentProgress.itemProgress }}%</span>
+                      <span class="counter">{{ currentProgress.itemIndex + 1 }} / {{ currentProgress.totalItems }}</span>
+                   </div>
+                </div>
+                <div class="modern-progress-bar">
+                   <div class="progress-fill" :style="{ width: currentProgress.itemProgress + '%' }"></div>
+                </div>
               </div>
             </div>
-            <div class="playlist-actions">
-              <label class="auto-download-toggle" :title="playlist.autoDownload ? 'Auto-download enabled' : 'Auto-download disabled'">
-                <input 
-                  type="checkbox" 
-                  :checked="playlist.autoDownload"
-                  @change="toggleAutoDownload(playlist)"
-                />
-                <span class="toggle-label">Auto</span>
-              </label>
-              <button class="btn-icon" @click="syncPlaylist(playlist)" title="Sync now">
-                <Icon name="refresh-cw" :size="16" />
-              </button>
-              <button class="btn-icon btn-danger" @click="deletePlaylist(playlist)" title="Delete">
-                <Icon name="trash" :size="16" />
-              </button>
+
+            <!-- Stats Overview -->
+            <div class="quick-stats-row">
+              <div class="mini-card-stat">
+                <div class="icon-wrap"><Icon name="database" :size="24" /></div>
+                <div class="data">
+                   <div class="num">{{ downloadStats?.uniqueVideos || 0 }}</div>
+                   <div class="label">Cached Index</div>
+                </div>
+              </div>
+              <div class="mini-card-stat">
+                <div class="icon-wrap color-blue"><Icon name="download-cloud" :size="24" /></div>
+                <div class="data">
+                   <div class="num">{{ downloadStats?.totalDownloads || 0 }}</div>
+                   <div class="label">Total Transfers</div>
+                </div>
+              </div>
+              <div class="mini-card-stat">
+                <div class="icon-wrap color-green"><Icon name="hard-drive" :size="24" /></div>
+                <div class="data">
+                   <div class="num">{{ formatBytes(downloadStats?.totalSize || 0) }}</div>
+                   <div class="label">Data Footprint</div>
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div class="status-sidebar-info">
+             <div class="panel-card config-overview">
+                <h4>Engine Config</h4>
+                <div class="config-mini-list">
+                   <div class="c-item">
+                      <span class="c-label">Automation</span>
+                      <span class="c-value" :class="autoDownloadConfig?.enabled ? 'text-success' : 'text-danger'">
+                        {{ autoDownloadConfig?.enabled ? 'Enabled' : 'Paused' }}
+                      </span>
+                   </div>
+                   <div class="c-item">
+                      <span class="c-label">Scan Delay</span>
+                      <span class="c-value">{{ autoDownloadConfig?.check_interval_minutes }} min</span>
+                   </div>
+                   <div class="c-item">
+                      <span class="c-label">Worker Limit</span>
+                      <span class="c-value">{{ autoDownloadConfig?.max_concurrent_downloads }} threads</span>
+                   </div>
+                </div>
+                <button class="btn-text-primary" @click="activeTab = 'config'">Modify Settings</button>
+             </div>
+
+             <div class="panel-card recent-activity">
+                <h4>Recent Syncs</h4>
+                <div class="history-mini">
+                   <div v-for="video in downloadedVideos.slice(0, 5)" :key="video.videoId" class="mini-v-item">
+                      <div class="v-title">{{ video.title }}</div>
+                      <div class="v-date">{{ formatDate(video.downloadedAt) }}</div>
+                   </div>
+                </div>
+                <button class="btn-text-primary" @click="activeTab = 'history'">Full History</button>
+             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Auto-Download Status Section -->
-    <div class="auto-download-section">
-      <div class="form-card">
-        <div class="section-header">
-          <h3>Auto-Download</h3>
-          <div class="auto-download-controls">
-            <button 
-              v-if="!autoDownloadStatus?.is_running"
-              class="btn btn-small btn-primary" 
-              @click="triggerAutoDownload"
-              :disabled="!autoDownloadConfig?.enabled"
-            >
-              <Icon name="play" :size="16" />
-              Run Now
-            </button>
-            <button 
-              v-else
-              class="btn btn-small btn-danger" 
-              @click="stopAutoDownload"
-            >
-              <Icon name="x" :size="16" />
-              Stop
-            </button>
+      <!-- Manual Download Tab -->
+      <div v-if="activeTab === 'download'" class="tab-pane fade-in">
+        <div class="download-container-focused">
+          <div class="download-card">
+            <div class="card-header">
+              <h3>Initiate Manual Transfer</h3>
+              <p>Download a specific video or entire playlist directly into your library.</p>
+            </div>
+            
+            <form @submit.prevent="startDownload" class="premium-form">
+              <div class="input-glow-group">
+                <label>YouTube Link or Playlist URL</label>
+                <div class="glow-input-wrapper">
+                  <Icon name="link" :size="20" class="field-icon" />
+                  <input
+                    v-model="downloadUrl"
+                    type="url"
+                    required
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    :disabled="isDownloading"
+                  />
+                </div>
+              </div>
+
+              <div class="options-grid">
+                <div class="option-col">
+                  <label>Audio Fidelity</label>
+                  <select v-model="options.audio_quality" :disabled="isDownloading">
+                    <option value="best">Lossless / Best Available</option>
+                    <option value="192">High Fidelity (192kbps)</option>
+                    <option value="128">Standard (128kbps)</option>
+                  </select>
+                </div>
+                <div class="option-col">
+                  <label>Parallel Workers</label>
+                  <input
+                    v-model.number="options.max_concurrent"
+                    type="number"
+                    min="1"
+                    max="10"
+                    :disabled="isDownloading"
+                  />
+                </div>
+                <div class="option-col">
+                  <label>Maximum Files</label>
+                  <input
+                    v-model.number="options.limit"
+                    type="number"
+                    min="1"
+                    :disabled="isDownloading"
+                    placeholder="Unlimited"
+                  />
+                </div>
+              </div>
+
+              <div class="form-footer">
+                 <button type="submit" class="btn btn-primary btn-xl" :disabled="isDownloading || !downloadUrl">
+                   <div v-if="isDownloading" class="btn-loading">
+                      <Icon name="refresh-cw" :size="22" class="spinning" />
+                      <span>Transferring...</span>
+                   </div>
+                   <div v-else class="btn-content">
+                      <Icon name="download" :size="22" />
+                      <span>Start Transfer</span>
+                   </div>
+                 </button>
+                 
+                 <button v-if="isDownloading" type="button" @click="cancelDownload" class="btn btn-outline-danger">
+                   Cancel Current Session
+                 </button>
+              </div>
+            </form>
           </div>
+
+          <!-- Progress Visualization Overlay -->
+          <Transition name="slide-up">
+            <div v-if="isDownloading" class="progress-panel-modern">
+              <div class="p-header">
+                 <h4>Transfer Protocol Active</h4>
+                 <div class="tag-live">Live</div>
+              </div>
+              
+              <div class="p-body">
+                 <div class="current-track-info">
+                    <div class="marquee-wrapper">
+                       <span class="t-title">{{ currentProgress.currentItem?.title || 'Resolving URL...' }}</span>
+                    </div>
+                    <span class="t-status">{{ currentProgress.message }}</span>
+                 </div>
+                 
+                 <div class="visual-progress">
+                    <div class="radial-wrap">
+                      <svg viewBox="0 0 36 36" class="circular-chart-alt">
+                        <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path class="circle-active" :stroke-dasharray="currentProgress.itemProgress + ', 100'" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      </svg>
+                      <span class="radial-val">{{ currentProgress.itemProgress }}%</span>
+                    </div>
+                    
+                    <div class="progress-counters">
+                       <div class="counter-item">
+                          <span class="c-num">{{ currentProgress.itemIndex + 1 }}</span>
+                          <span class="c-lbl">Current</span>
+                       </div>
+                       <div class="counter-sep">/</div>
+                       <div class="counter-item">
+                          <span class="c-num">{{ currentProgress.totalItems }}</span>
+                          <span class="c-lbl">Total</span>
+                       </div>
+                    </div>
+                 </div>
+              </div>
+            </div>
+          </Transition>
         </div>
-        
-        <div class="auto-download-grid">
-          <div class="config-item">
-            <label class="toggle-switch">
-              <input 
-                type="checkbox" 
-                :checked="autoDownloadConfig?.enabled"
-                @change="updateAutoDownloadEnabled"
-              />
-              <span class="slider"></span>
-            </label>
-            <span class="config-label">Enable Auto-Download</span>
+      </div>
+
+      <!-- Playlists Tab -->
+      <div v-if="activeTab === 'playlists'" class="tab-pane fade-in">
+        <div class="playlists-view-container">
+          <div class="view-header">
+            <div class="header-text">
+              <h3>Managed Playlists</h3>
+              <p>Sync these automated collections with your local library.</p>
+            </div>
+            <button class="btn btn-primary" @click="showAddPlaylistModal = true">
+              <Icon name="plus" :size="18" />
+              Register New
+            </button>
           </div>
           
-          <div class="config-item">
-            <label>Check Interval (minutes):</label>
-            <input 
-              type="number" 
-              :value="autoDownloadConfig?.check_interval_minutes"
-              @change="updateCheckInterval"
-              min="5"
-              max="1440"
-            />
+          <div v-if="loadingPlaylists" class="centered-loading">
+            <div class="loader-wave">
+               <span></span><span></span><span></span><span></span>
+            </div>
+            <p>Scanning registry...</p>
           </div>
           
-          <div class="config-item">
-            <label>Max Concurrent:</label>
-            <input 
-              type="number" 
-              :value="autoDownloadConfig?.max_concurrent_downloads"
-              @change="updateMaxConcurrent"
-              min="1"
-              max="5"
-            />
+          <div v-else-if="savedPlaylists.length === 0" class="empty-placeholder-v2">
+            <div class="icon-circle"><Icon name="list" :size="40" /></div>
+            <h3>No Playlists Registered</h3>
+            <p>Start by adding a YouTube playlist to automatically track new releases.</p>
+            <button class="btn btn-outline" @click="showAddPlaylistModal = true">Register First Playlist</button>
           </div>
-        </div>
-        
-        <div v-if="autoDownloadStatus?.is_running" class="auto-download-progress">
-          <div class="progress-info">
-            <Icon name="refresh-cw" :size="16" class="spinning" />
-            <span>Downloading: {{ autoDownloadStatus.current_playlist || 'Starting...' }}</span>
-          </div>
-          <div class="progress-stats">
-            <span>Completed: {{ autoDownloadStatus.downloads_completed }}</span>
-            <span>Skipped: {{ autoDownloadStatus.downloads_skipped }}</span>
+          
+          <div v-else class="playlist-grid-modern">
+            <div v-for="playlist in savedPlaylists" :key="playlist.id" class="playlist-card-v2">
+              <div class="card-bg-glow"></div>
+              <div class="card-inner">
+                 <div class="p-top-row">
+                    <div class="p-type-icon"><Icon name="youtube" :size="20" /></div>
+                    <div class="p-actions-overlay">
+                       <button class="p-icon-btn sync" @click="syncPlaylist(playlist)" title="Sync manually">
+                          <Icon name="refresh-cw" :size="16" />
+                       </button>
+                       <button class="p-icon-btn delete" @click="deletePlaylist(playlist)" title="Remove">
+                          <Icon name="trash" :size="16" />
+                       </button>
+                    </div>
+                 </div>
+                 
+                 <div class="p-content">
+                    <div class="p-title-wrap">
+                       <span class="title">{{ playlist.name }}</span>
+                       <div v-if="playlist.autoDownload" class="badge-status active">Auto</div>
+                    </div>
+                    <div class="p-link">{{ playlist.url }}</div>
+                    <div v-if="playlist.description" class="p-memo">{{ playlist.description }}</div>
+                 </div>
+                 
+                 <div class="p-footer">
+                    <div class="last-sync">
+                       <Icon name="clock" :size="12" />
+                       <span>{{ playlist.lastSyncedAt ? 'Last sync: ' + formatDate(playlist.lastSyncedAt) : 'Never synced' }}</span>
+                    </div>
+                    <button 
+                      class="toggle-action" 
+                      :class="{ enabled: playlist.autoDownload }"
+                      @click="toggleAutoDownload(playlist)"
+                    >
+                       {{ playlist.autoDownload ? 'Disable Auto' : 'Enable Auto' }}
+                    </button>
+                 </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Download Form -->
-    <div class="download-form-section">
-      <div class="form-card">
-        <h3>Manual Download</h3>
-        <form @submit.prevent="startDownload" class="download-form">
-          <div class="form-group">
-            <label>YouTube URL:</label>
-            <input
-              v-model="downloadUrl"
-              type="url"
-              required
-              placeholder="https://www.youtube.com/playlist?list=... or https://www.youtube.com/watch?v=..."
-              :disabled="isDownloading"
-            />
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label for="audio-quality">Audio Quality:</label>
-              <select id="audio-quality" v-model="options.audio_quality" :disabled="isDownloading">
-                <option value="best">Best</option>
-                <option value="192">192 kbps</option>
-                <option value="128">128 kbps</option>
-              </select>
+      <!-- Maintenance / Config Tab -->
+      <div v-if="activeTab === 'config'" class="tab-pane fade-in">
+        <div class="maintenance-view">
+          <div class="settings-card-complex">
+            <div class="settings-header">
+               <h3>Engine Parameters</h3>
+               <p>Core settings for the background automation services.</p>
             </div>
-            <div class="form-group">
-              <label for="max-concurrent">Max Concurrent:</label>
-              <input
-                id="max-concurrent"
-                v-model.number="options.max_concurrent"
-                type="number"
-                min="1"
-                max="10"
-                :disabled="isDownloading"
-              />
+            
+            <div class="settings-list-v2">
+              <!-- Master Toggle -->
+              <div class="setting-item-v2">
+                <div class="s-info">
+                   <span class="s-title">Automation Engine</span>
+                   <span class="s-desc">Master switch for the background scanning process.</span>
+                </div>
+                <div class="s-control">
+                   <label class="premium-toggle">
+                     <input 
+                       type="checkbox" 
+                       :checked="autoDownloadConfig?.enabled"
+                       @change="updateAutoDownloadEnabled"
+                     />
+                     <span class="t-slider"></span>
+                   </label>
+                </div>
+              </div>
+
+              <!-- Interval -->
+              <div class="setting-item-v2">
+                <div class="s-info">
+                   <span class="s-title">Check Frequency</span>
+                   <span class="s-desc">Interval between repository scans (minutes).</span>
+                </div>
+                <div class="s-control">
+                   <div class="input-with-unit">
+                      <input 
+                        type="number" 
+                        :value="autoDownloadConfig?.check_interval_minutes"
+                        @change="updateCheckInterval"
+                        min="5"
+                        max="1440"
+                      />
+                      <span class="u-tag">MIN</span>
+                   </div>
+                </div>
+              </div>
+
+              <!-- Concurrency -->
+              <div class="setting-item-v2">
+                <div class="s-info">
+                   <span class="s-title">Parallel Scaling</span>
+                   <span class="s-desc">Maximum concurrent transfer workers allowed.</span>
+                </div>
+                <div class="s-control">
+                   <div class="input-with-unit">
+                      <input 
+                        type="number" 
+                        :value="autoDownloadConfig?.max_concurrent_downloads"
+                        @change="updateMaxConcurrent"
+                        min="1"
+                        max="5"
+                      />
+                      <span class="u-tag">WORKERS</span>
+                   </div>
+                </div>
+              </div>
             </div>
-            <div class="form-group">
-              <label for="limit">Limit (optional):</label>
-              <input
-                id="limit"
-                v-model.number="options.limit"
-                type="number"
-                min="1"
-                :disabled="isDownloading"
-                placeholder="Leave empty for no limit"
-              />
-            </div>
           </div>
-
-          <button type="submit" class="btn btn-primary" :disabled="isDownloading">
-            {{ isDownloading ? 'Downloading...' : 'Start Download' }}
-          </button>
-        </form>
-
-        <!-- Progress Section -->
-        <div v-if="isDownloading" class="progress-section">
-          <div class="progress-header">
-            <h4>Download Progress</h4>
-            <button @click="cancelDownload" class="btn btn-danger">Cancel</button>
-          </div>
-
-          <div class="progress-info">
-            <p v-if="currentProgress.currentItem">
-              Current: {{ currentProgress.currentItem.title }}
-            </p>
-            <p v-if="currentProgress.message" class="status-message">
-              {{ currentProgress.message }}
-            </p>
-          </div>
-
-          <div class="progress-bar-container">
-            <div class="progress-bar">
-              <div
-                class="progress-fill"
-                :style="{ width: currentProgress.itemProgress + '%' }"
-              ></div>
-            </div>
-            <span class="progress-percent">{{ currentProgress.itemProgress }}%</span>
-          </div>
-
-          <div class="progress-stats">
-            <span>
-              Items: {{ currentProgress.itemIndex + 1 }} /
-              {{ currentProgress.totalItems }}
-            </span>
-            <span v-if="currentProgress.currentItem?.size">
-              Size: {{ formatBytes(currentProgress.currentItem.size) }}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Statistics Section -->
-    <div v-if="!isDownloading && downloadStats" class="stats-section">
-      <div class="stats-card">
-        <h3>Download Statistics</h3>
-        <div class="stats-grid">
-          <div class="stat-item">
-            <span class="stat-label">Total Videos Downloaded</span>
-            <span class="stat-value">{{ downloadStats.totalDownloads }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Unique Videos</span>
-            <span class="stat-value">{{ downloadStats.uniqueVideos }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Total Size</span>
-            <span class="stat-value">{{ formatBytes(downloadStats.totalSize) }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Download History -->
-    <div class="history-section">
-      <h3>Download History</h3>
-      <div class="history-container">
-        <div v-if="loadingHistory" class="loading">Loading history...</div>
-        <div v-else-if="downloadedVideos.length === 0" class="empty">
-          <p>No downloads yet.</p>
-        </div>
-        <table v-else class="history-table">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Video ID</th>
-              <th>Downloaded</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="video in downloadedVideos" :key="video.videoId" class="history-row">
-              <td class="title">{{ video.title }}</td>
-              <td class="video-id">{{ video.videoId }}</td>
-              <td class="date">{{ formatDate(video.downloadedAt) }}</td>
-              <td class="actions">
-                <button
-                  @click="removeFromHistory(video.videoId)"
-                  class="btn-delete"
-                  title="Allow re-download"
-                >
-                  <Icon name="trash" :size="16" />
+          
+          <div class="troubleshooting-card">
+             <h4>System Maintenance</h4>
+             <p>Use these tools if the engine is unresponsive or local cache is out of sync.</p>
+             <div class="actions-grid">
+                <button class="btn btn-outline" @click="processDownloads">
+                   <Icon name="refresh-cw" :size="16" />
+                   Rebuild Index
                 </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                <button class="btn btn-outline-danger" @click="stopAutoDownload">
+                   <Icon name="alert-circle" :size="16" />
+                   Emergency Stop
+                </button>
+             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Tab -->
+      <div v-if="activeTab === 'history'" class="tab-pane fade-in">
+        <div class="history-container-modern">
+          <div class="history-header-bar">
+             <h3>Download History</h3>
+             <div class="history-search">
+                <!-- Potential for a search input here -->
+             </div>
+          </div>
+          
+          <div v-if="loadingHistory" class="loading-state">
+            <Icon name="refresh-cw" :size="32" class="spinning" />
+            <p>Loading history...</p>
+          </div>
+          <div v-else-if="downloadedVideos.length === 0" class="empty-state">
+            <p>No downloads recorded yet.</p>
+          </div>
+          <div v-else class="history-table-wrapper">
+            <table class="history-table-new">
+              <thead>
+                <tr>
+                  <th>Video Title</th>
+                  <th>ID</th>
+                  <th>Date</th>
+                  <th class="text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="video in downloadedVideos" :key="video.videoId">
+                  <td class="video-title-cell">{{ video.title }}</td>
+                  <td><code class="v-id">{{ video.videoId }}</code></td>
+                  <td>{{ formatDate(video.downloadedAt) }}</td>
+                  <td class="text-right">
+                    <button
+                      @click="removeFromHistory(video.videoId)"
+                      class="btn-icon-danger"
+                      title="Forget this video"
+                    >
+                      <Icon name="trash" :size="16" />
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -322,25 +576,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { musicAPI } from '../../api/music'
 import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
+import { useDownloadStore } from '../../stores/downloadStore'
+import { formatBytes, formatDate } from '../../utils/musicFormatters'
 import Icon from '../../shared/components/Icons.vue'
 
 const { success, error: showError } = useToast()
 const { confirm } = useConfirm()
-
-interface DownloadProgress {
-  itemIndex: number
-  totalItems: number
-  itemProgress: number
-  currentItem?: {
-    title: string
-    size?: number
-  }
-  message?: string
-}
+const downloadStore = useDownloadStore()
 
 interface DownloadedVideo {
   videoId: string
@@ -381,16 +627,46 @@ interface AutoDownloadStatus {
 }
 
 const downloadUrl = ref('')
+
+// Computed-like refs for backward compatibility in template
 const isDownloading = ref(false)
-const currentProgress = ref<DownloadProgress>({
+const currentProgress = ref({
   itemIndex: 0,
   totalItems: 0,
   itemProgress: 0,
+  currentItem: { title: '', size: 0 },
+  message: ''
 })
+
+// Sync local refs with store
+watch(() => downloadStore.currentProgress, (newProgress) => {
+  if (newProgress) {
+    isDownloading.value = downloadStore.isDownloading
+    currentProgress.value = {
+      itemIndex: newProgress.completed_files || 0,
+      totalItems: newProgress.total_files || 0,
+      itemProgress: Math.round(newProgress.progress || 0),
+      currentItem: { 
+        title: newProgress.current_file || '', 
+        size: 0 
+      },
+      message: newProgress.status
+    }
+  } else {
+    isDownloading.value = false
+  }
+}, { immediate: true, deep: true })
+
+// Watch for completion to refresh history
+watch(() => downloadStore.lastCompletedAt, () => {
+  fetchDownloadedVideos()
+  fetchDownloadStats()
+  downloadUrl.value = ''
+})
+
 const downloadedVideos = ref<DownloadedVideo[]>([])
 const downloadStats = ref<DownloadStats | null>(null)
 const loadingHistory = ref(false)
-const eventSource = ref<EventSource | null>(null)
 
 // Saved playlists state
 const savedPlaylists = ref<YoutubePlaylist[]>([])
@@ -402,6 +678,10 @@ const newPlaylist = ref({ name: '', url: '', description: '', autoDownload: fals
 const autoDownloadConfig = ref<AutoDownloadConfig | null>(null)
 const autoDownloadStatus = ref<AutoDownloadStatus | null>(null)
 let statusPollInterval: number | null = null
+
+const isProcessingDownloads = ref(false)
+
+const activeTab = ref('status')
 
 const options = ref({
   audio_quality: 'best',
@@ -473,10 +753,8 @@ const syncPlaylist = async (playlist: YoutubePlaylist) => {
   try {
     const response = await musicAPI.syncYoutubePlaylist(playlist.id)
     success('Sync Started', `Syncing "${playlist.name}"`)
-    // Optionally subscribe to progress
     if (response.data?.sessionId) {
-      subscribeToProgress(response.data.sessionId)
-      isDownloading.value = true
+      downloadStore.setSession(response.data.sessionId)
     }
   } catch (error) {
     console.error('Error syncing playlist:', error)
@@ -581,6 +859,19 @@ const stopAutoDownload = async () => {
   }
 }
 
+const processDownloads = async () => {
+  try {
+    isProcessingDownloads.value = true
+    const response = await musicAPI.syncMusicFolder('/music/downloads')
+    success('Processing Complete', `Found and added ${response.data.inserted} new tracks from downloads folder.`)
+  } catch (error: any) {
+    console.error('Error processing downloads:', error)
+    showError('Process Failed', error.response?.data?.error || 'Failed to process downloads folder')
+  } finally {
+    isProcessingDownloads.value = false
+  }
+}
+
 // === Manual Download Functions ===
 const startDownload = async () => {
   if (!downloadUrl.value.trim()) {
@@ -589,13 +880,6 @@ const startDownload = async () => {
   }
 
   try {
-    isDownloading.value = true
-    currentProgress.value = {
-      itemIndex: 0,
-      totalItems: 0,
-      itemProgress: 0,
-    }
-
     const response = await musicAPI.startYoutubeDownload({
       url: downloadUrl.value,
       output_dir: '/music/downloads',
@@ -604,58 +888,11 @@ const startDownload = async () => {
       audio_quality: options.value.audio_quality,
     })
 
-    const sessionId = response.data.sessionId
-    subscribeToProgress(sessionId)
+    const sessionId = response.data.session_id || response.data.sessionId
+    downloadStore.setSession(sessionId)
   } catch (error) {
     console.error('Error starting download:', error)
     showError('Download Failed', 'Failed to start download')
-    isDownloading.value = false
-  }
-}
-
-const subscribeToProgress = (sessionId: string) => {
-  try {
-    const stream = musicAPI.getYoutubeProgressStream(sessionId)
-
-    stream.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-
-        if (data.type === 'progress') {
-          currentProgress.value = {
-            itemIndex: data.itemIndex,
-            totalItems: data.totalItems,
-            itemProgress: data.progress,
-            currentItem: data.currentItem,
-            message: data.message,
-          }
-        } else if (data.type === 'complete') {
-          isDownloading.value = false
-          closeEventSource()
-          downloadUrl.value = ''
-          success('Download Complete', 'All files have been downloaded successfully')
-          fetchDownloadedVideos()
-          fetchDownloadStats()
-        } else if (data.type === 'error') {
-          isDownloading.value = false
-          closeEventSource()
-          showError('Download Error', data.message || 'An error occurred during download')
-        }
-      } catch (e) {
-        console.error('Error parsing progress data:', e)
-      }
-    }
-
-    stream.onerror = () => {
-      isDownloading.value = false
-      closeEventSource()
-      console.error('SSE connection error')
-    }
-
-    eventSource.value = stream
-  } catch (error) {
-    console.error('Error subscribing to progress:', error)
-    isDownloading.value = false
   }
 }
 
@@ -669,23 +906,7 @@ const cancelDownload = async () => {
   })
   if (!confirmed) return
 
-  try {
-    const sessionId = currentProgress.value.currentItem?.title
-    if (sessionId) {
-      await musicAPI.cancelYoutubeDownload(sessionId)
-    }
-    closeEventSource()
-    isDownloading.value = false
-  } catch (error) {
-    console.error('Error canceling download:', error)
-  }
-}
-
-const closeEventSource = () => {
-  if (eventSource.value) {
-    eventSource.value.close()
-    eventSource.value = null
-  }
+  downloadStore.cancelDownload()
 }
 
 const fetchDownloadedVideos = async () => {
@@ -738,18 +959,6 @@ const removeFromHistory = async (videoId: string) => {
   }
 }
 
-const formatBytes = (bytes: number) => {
-  if (bytes === 0) return '0 Bytes'
-  const k = 1024
-  const sizes = ['Bytes', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
-}
-
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleDateString()
-}
-
 onMounted(() => {
   fetchDownloadedVideos()
   fetchDownloadStats()
@@ -761,7 +970,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  closeEventSource()
   if (statusPollInterval) {
     clearInterval(statusPollInterval)
   }
@@ -772,845 +980,919 @@ onUnmounted(() => {
 .downloader-tab {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 24px;
+  animation: fadeIn 0.5s ease-out;
+  color: var(--text-color);
 }
 
 .header h2 {
   margin: 0;
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text-color);
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(to right, var(--text-color), var(--text-tertiary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Tabs Navigation Modern */
+.tabs-nav {
+  display: flex;
+  gap: 2px;
+  background: var(--background-elevated);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  width: max-content;
+}
+
+.tab-btn {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-/* Download Form Section */
-.download-form-section {
-  margin-bottom: 8px;
-}
-
-.form-card {
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 28px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.form-card h3 {
-  margin-top: 0;
-  margin-bottom: 24px;
-  color: var(--text-color);
-  font-size: 18px;
+  gap: 10px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
   font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  cursor: pointer;
+  overflow: hidden;
 }
 
-.download-form {
+.tab-btn:hover {
+  color: var(--text-color);
+  background: var(--surface-hover);
+}
+
+.tab-btn.active {
+  color: var(--primary-light);
+  background: var(--primary-glow);
+}
+
+.tab-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 2px;
+  background: var(--primary-color);
+  transition: width 0.3s ease;
+}
+
+.tab-btn.active .tab-indicator {
+  width: 100%;
+}
+
+/* Status Layout */
+.status-layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 24px;
+}
+
+.main-status-area {
   display: flex;
   flex-direction: column;
   gap: 24px;
 }
 
-.form-group {
+.glass-card {
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  padding: 32px;
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.status-hero {
+  border: 1px solid var(--border-color);
+  transition: border-color 0.5s ease;
+}
+
+.status-hero.execution-active {
+  border-color: var(--primary-color);
+}
+
+.hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 32px;
+}
+
+.hero-info h3 {
+  font-size: 24px;
+  margin: 0 0 8px 0;
+  font-weight: 700;
+}
+
+.hero-info p {
+  color: var(--text-tertiary);
+  margin: 0;
+  font-size: 15px;
+}
+
+.engine-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+
+.state-label {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  background: var(--background-elevated);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-color);
+}
+
+.state-label.active {
+  background: var(--primary-glow);
+  color: var(--primary-light);
+  border-color: var(--primary-color);
+}
+
+.pulse-ring {
+  width: 12px;
+  height: 12px;
+  background: var(--primary-color);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.7);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(139, 92, 246, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+}
+
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 0;
+}
+
+.execution-details, .manual-execution-details {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+  animation: slideDown 0.4s ease-out;
+}
+
+.exec-playlist {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.exec-playlist .p-name {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.exec-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.exec-stat {
+  background: var(--background-elevated);
+  padding: 16px;
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
-}
-
-.form-group label {
-  margin-bottom: 10px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.form-group input[type='url'],
-.form-group input[type='text'],
-.form-group input[type='number'] {
-  background: var(--background-elevated);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 14px 16px;
-  color: var(--text-color);
-  font-family: inherit;
-  font-size: 15px;
-  transition: all 0.2s ease;
-}
-
-.form-group input:hover {
-  border-color: var(--primary-color);
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--primary-glow);
-}
-
-.form-group input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.form-group select {
-  background: var(--background-elevated);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 14px 16px;
-  color: var(--text-color);
-  font-family: inherit;
-  font-size: 15px;
-  transition: all 0.2s ease;
-  cursor: pointer;
-}
-
-.form-group select:hover {
-  border-color: var(--primary-color);
-}
-
-.form-group select:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--primary-glow);
-}
-
-.form-group select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.form-row {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-
-.form-row .form-group {
-  flex: 1;
-  min-width: 180px;
-}
-
-.btn {
-  padding: 14px 24px;
-  border: none;
-  border-radius: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 15px;
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
 }
 
-.btn-primary {
-  background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
-  color: #fff;
-  box-shadow: 0 4px 16px var(--primary-glow);
-  align-self: flex-start;
+.exec-stat .val {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--primary-light);
 }
 
-.btn-primary:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 24px var(--primary-glow);
+.exec-stat .lbl {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-top: 4px;
 }
 
-.btn-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.btn-danger {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  color: white;
-  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
-}
-
-.btn-danger:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(239, 68, 68, 0.4);
-}
-
-/* Progress Section */
-.progress-section {
-  margin-top: 28px;
-  padding-top: 28px;
-  border-top: 1px solid var(--border-color);
-}
-
-.progress-header {
+/* Manual progress bar modern */
+.manual-info {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
 }
 
-.progress-header h4 {
-  margin: 0;
-  color: var(--text-color);
+.info-text .title {
+  display: block;
+  font-weight: 700;
   font-size: 16px;
-  font-weight: 600;
+}
+
+.info-text .subtext {
+  font-size: 13px;
+  color: var(--text-tertiary);
 }
 
 .progress-info {
-  margin-bottom: 20px;
-  font-size: 14px;
-  color: var(--text-color);
+  text-align: right;
+}
+
+.progress-info .percent {
+  display: block;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--accent-color);
+}
+
+.progress-info .counter {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.modern-progress-bar {
+  height: 8px;
   background: var(--background-elevated);
-  border-radius: 12px;
-  padding: 16px;
-}
-
-.progress-info p {
-  margin: 6px 0;
-}
-
-.status-message {
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-style: italic;
-}
-
-.progress-bar-container {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.progress-bar {
-  flex: 1;
-  height: 10px;
-  background: var(--background-elevated);
-  border-radius: 999px;
+  border-radius: 4px;
   overflow: hidden;
-  border: 1px solid var(--border-color);
 }
 
 .progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--primary-color), var(--accent-color));
-  transition: width 0.3s ease;
-  position: relative;
+  box-shadow: 0 0 12px var(--primary-glow);
+  transition: width 0.4s cubic-bezier(0.1, 0.7, 1, 0.1);
 }
 
-.progress-fill::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
-  animation: shimmer 1.5s infinite;
-}
-
-@keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
-.progress-percent {
-  min-width: 50px;
-  text-align: right;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--primary-light);
-}
-
-.progress-stats {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-/* Statistics Section */
-.stats-section {
-  margin-bottom: 8px;
-}
-
-.stats-card {
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.stats-card h3 {
-  margin: 0 0 24px 0;
-  color: var(--text-color);
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.stats-grid {
+/* Quick Stats Row */
+.quick-stats-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
 }
 
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px;
-  background: var(--background-elevated);
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-  transition: all 0.2s ease;
-}
-
-.stat-item:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.stat-label {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  margin-bottom: 8px;
-  font-weight: 600;
-}
-
-.stat-value {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--primary-light);
-}
-
-/* History Section */
-.history-section h3 {
-  margin: 0 0 20px 0;
-  color: var(--text-color);
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.history-container {
+.mini-card-stat {
   background: var(--surface-color);
+  padding: 20px;
+  border-radius: 20px;
   border: 1px solid var(--border-color);
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.loading,
-.empty {
-  text-align: center;
-  padding: 48px;
-  color: var(--text-secondary);
-}
-
-.loading::before {
-  content: '';
-  display: block;
-  width: 32px;
-  height: 32px;
-  margin: 0 auto 16px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--primary-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.empty p {
-  margin: 0;
-}
-
-.history-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.history-table thead {
-  background: var(--background-elevated);
-  border-bottom: 2px solid var(--border-color);
-}
-
-.history-table th {
-  padding: 16px 20px;
-  text-align: left;
-  font-weight: 700;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
-.history-row {
-  border-bottom: 1px solid var(--border-color);
-  transition: background 0.2s ease;
-}
-
-.history-row:hover {
-  background: var(--primary-glow);
-}
-
-.history-row td {
-  padding: 16px 20px;
-  color: var(--text-color);
-  font-size: 14px;
-}
-
-.title {
-  font-weight: 600;
-}
-
-.video-id {
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-family: 'JetBrains Mono', monospace;
-  background: var(--background-elevated);
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-
-.date {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.actions {
-  text-align: center;
-}
-
-.btn-delete {
-  background: var(--background-elevated);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 16px;
-  padding: 8px 12px;
-  transition: all 0.2s ease;
-}
-
-.btn-delete:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
-  transform: scale(1.08);
-}
-
-/* Section Header */
-.section-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  gap: 16px;
+  transition: transform 0.2s;
 }
 
-.section-header h3 {
-  margin: 0;
-}
-
-/* Saved Playlists Section */
-.playlists-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.playlist-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  background: var(--background-elevated);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  transition: all 0.2s ease;
-}
-
-.playlist-card:hover {
+.mini-card-stat:hover {
+  transform: translateY(-4px);
   border-color: var(--primary-color);
 }
 
-.playlist-info {
-  flex: 1;
-  min-width: 0;
+.icon-wrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--primary-glow);
+  color: var(--primary-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.playlist-name {
-  font-weight: 600;
-  color: var(--text-color);
-  margin-bottom: 4px;
+.icon-wrap.color-blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+.icon-wrap.color-green { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+
+.mini-card-stat .num {
+  font-size: 22px;
+  font-weight: 800;
 }
 
-.playlist-url {
+.mini-card-stat .label {
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+/* Sidebar Panels */
+.status-sidebar-info {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.panel-card {
+  background: var(--surface-color);
+  padding: 24px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+}
+
+.panel-card h4 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  letter-spacing: 0.05em;
+}
+
+.config-mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.c-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.history-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mini-v-item {
+  font-size: 13px;
+}
+
+.mini-v-item .v-title {
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 400px;
 }
 
-.playlist-desc {
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-top: 4px;
-}
-
-.playlist-meta {
-  margin-top: 8px;
-  font-size: 12px;
-}
-
-.last-sync {
+.mini-v-item .v-date {
+  font-size: 11px;
   color: var(--text-tertiary);
 }
 
-.last-sync.never {
-  color: var(--warning-color);
+/* Manual Download Tab Focused */
+.download-container-focused {
+  max-width: 800px;
+  margin: 0 auto;
 }
 
-.playlist-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: 16px;
-}
-
-.auto-download-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  padding: 6px 12px;
+.download-card {
   background: var(--surface-color);
+  border-radius: 28px;
+  padding: 40px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  font-size: 12px;
-  transition: all 0.2s ease;
+  box-shadow: var(--shadow-xl);
 }
 
-.auto-download-toggle:has(input:checked) {
-  background: var(--primary-glow);
-  border-color: var(--primary-color);
-  color: var(--primary-light);
+.card-header h3 {
+  font-size: 28px;
+  margin: 0 0 10px 0;
 }
 
-.auto-download-toggle input {
-  accent-color: var(--primary-color);
+.card-header p {
+  color: var(--text-tertiary);
+  margin-bottom: 40px;
 }
 
-.btn-icon {
+.input-glow-group label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.glow-input-wrapper {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
+}
+
+.glow-input-wrapper .field-icon {
+  position: absolute;
+  left: 18px;
+  color: var(--text-tertiary);
+}
+
+.glow-input-wrapper input {
+  width: 100%;
+  padding: 18px 24px 18px 52px;
+  background: var(--background-elevated);
+  border: 2px solid var(--border-color);
+  border-radius: 16px;
+  font-size: 16px;
+  transition: all 0.3s;
+}
+
+.glow-input-wrapper input:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 20px var(--primary-glow);
   background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  transition: all 0.2s ease;
 }
 
-.btn-icon:hover {
-  background: var(--primary-glow);
-  border-color: var(--primary-color);
-  color: var(--primary-light);
+.options-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin: 32px 0;
 }
 
-.btn-icon.btn-danger:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: #f87171;
-}
-
-.btn-small {
-  padding: 8px 16px;
+.option-col label {
+  display: block;
   font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
 }
 
-/* Auto-Download Section */
-.auto-download-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.config-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.config-item label {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.config-item input[type="number"] {
-  width: 80px;
-  padding: 8px 12px;
+.option-col select, .option-col input {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 10px;
   background: var(--background-elevated);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  color: var(--text-color);
-  font-size: 14px;
 }
 
-.config-label {
-  font-weight: 500;
-  color: var(--text-color);
+.btn-xl {
+  padding: 20px 40px;
+  font-size: 18px;
+  font-weight: 800;
+  border-radius: 18px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
 }
 
-/* Toggle Switch */
-.toggle-switch {
+.btn-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Progress Panel Modern */
+.progress-panel-modern {
+  margin-top: 24px;
+  background: var(--surface-color);
+  border-radius: 20px;
+  padding: 24px;
+  border: 1px solid var(--primary-color);
+  box-shadow: 0 8px 32px var(--primary-glow);
+}
+
+.p-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.tag-live {
+  background: #ef4444;
+  color: white;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 900;
+  border-radius: 4px;
+  text-transform: uppercase;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink { 50% { opacity: 0.5; } }
+
+.current-track-info {
+  margin-bottom: 24px;
+}
+
+.t-title {
+  font-size: 18px;
+  font-weight: 700;
+  display: block;
+}
+
+.visual-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.radial-wrap {
+  width: 100px;
+  height: 100px;
   position: relative;
-  display: inline-block;
-  width: 48px;
-  height: 26px;
 }
 
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
+.circular-chart-alt {
+  width: 100%;
+  height: 100%;
 }
 
-.slider {
+.circle-active {
+  fill: none;
+  stroke: var(--primary-color);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.5s ease;
+}
+
+.radial-val {
   position: absolute;
-  cursor: pointer;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.progress-counters {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.counter-item {
+  text-align: center;
+}
+
+.counter-item .c-num { font-size: 32px; font-weight: 800; display: block; }
+.counter-item .c-lbl { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; }
+
+/* Playlist Grid Modern */
+.playlist-grid-modern {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+}
+
+.playlist-card-v2 {
+  position: relative;
+  background: var(--surface-color);
+  border-radius: 24px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.playlist-card-v2:hover {
+  transform: translateY(-8px);
+  border-color: var(--primary-color);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+}
+
+.card-bg-glow {
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
-  background-color: var(--background-elevated);
-  border: 1px solid var(--border-color);
-  transition: 0.3s;
-  border-radius: 26px;
+  height: 120px;
+  background: linear-gradient(135deg, var(--primary-glow) 0%, transparent 100%);
+  opacity: 0.5;
+  pointer-events: none;
 }
 
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 20px;
-  width: 20px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--text-tertiary);
-  transition: 0.3s;
-  border-radius: 50%;
+.card-inner {
+  position: relative;
+  padding: 24px;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
-.toggle-switch input:checked + .slider {
-  background-color: var(--primary-color);
-  border-color: var(--primary-color);
+.p-top-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
 }
 
-.toggle-switch input:checked + .slider:before {
-  transform: translateX(22px);
-  background-color: white;
-}
-
-.auto-download-progress {
-  padding: 16px;
-  background: var(--primary-glow);
-  border: 1px solid var(--primary-color);
+.p-type-icon {
+  width: 40px;
+  height: 40px;
   border-radius: 12px;
-  margin-top: 16px;
-}
-
-.auto-download-progress .progress-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-  font-weight: 500;
-}
-
-.auto-download-progress .progress-stats {
-  display: flex;
-  gap: 20px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Modal */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(8px);
+  background: rgba(255,0,0,0.1);
+  color: #ff0000;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-  padding: 20px;
 }
 
-.modal {
-  background: var(--surface-color);
+.p-actions-overlay {
+  display: flex;
+  gap: 8px;
+}
+
+.p-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--background-elevated);
   border: 1px solid var(--border-color);
-  border-radius: 20px;
-  width: 100%;
-  max-width: 480px;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
-  overflow: hidden;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
 }
 
-.modal-header {
+.p-icon-btn:hover { color: var(--text-color); border-color: var(--primary-color); }
+.p-icon-btn.delete:hover { color: #ef4444; border-color: #ef4444; }
+
+.p-content {
+  flex: 1;
+}
+
+.p-title-wrap .title {
+  font-size: 20px;
+  font-weight: 700;
+  display: block;
+}
+
+.badge-status.active {
+  background: var(--primary-color);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  display: inline-block;
+  margin-top: 4px;
+}
+
+.p-link {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin: 12px 0;
+  word-break: break-all;
+  font-family: monospace;
+}
+
+.p-memo {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.p-footer {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24px 24px 0;
 }
 
-.modal-header h3 {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.modal-close {
-  background: none;
-  border: none;
+.last-sync {
+  font-size: 12px;
   color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 8px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  transition: all 0.2s ease;
+  gap: 6px;
 }
 
-.modal-close:hover {
-  color: var(--text-color);
-  background: var(--surface-hover);
+.toggle-action {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: var(--background-elevated);
+  border: 1px solid var(--border-color);
 }
 
-.modal-body {
-  padding: 24px;
+.toggle-action.enabled {
+  background: var(--primary-glow);
+  color: var(--primary-light);
+  border-color: var(--primary-color);
 }
 
-.modal-body .form-group {
-  margin-bottom: 16px;
+/* Maintenance Page */
+.maintenance-view {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.modal-body .form-group label {
-  margin-bottom: 8px;
+.settings-card-complex {
+  background: var(--surface-color);
+  border-radius: 24px;
+  padding: 32px;
+  border: 1px solid var(--border-color);
 }
 
-.modal-body .form-group input[type="text"],
-.modal-body .form-group input[type="url"] {
-  width: 100%;
-  padding: 12px 16px;
+.setting-item-v2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.setting-item-v2:last-child { border: none; }
+
+.s-title { font-size: 17px; font-weight: 700; display: block; }
+.s-desc { font-size: 13px; color: var(--text-tertiary); }
+
+.premium-toggle {
+  position: relative;
+  width: 60px;
+  height: 32px;
+}
+
+.premium-toggle input { opacity: 0; width: 0; height: 0; }
+
+.t-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--background-elevated);
+  transition: .4s;
+  border-radius: 34px;
+  border: 1px solid var(--border-color);
+}
+
+.t-slider:before {
+  position: absolute;
+  content: "";
+  height: 24px; width: 24px;
+  left: 4px; bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+input:checked + .t-slider { background-color: var(--primary-color); border-color: var(--primary-color); }
+input:checked + .t-slider:before { transform: translateX(26px); }
+
+.input-with-unit {
+  display: flex;
+  align-items: center;
   background: var(--background-elevated);
   border: 1px solid var(--border-color);
   border-radius: 10px;
-  color: var(--text-color);
-  font-size: 14px;
+  overflow: hidden;
 }
 
-.modal-body .form-group input:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--primary-glow);
+.input-with-unit input {
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  width: 80px;
+  text-align: right;
+  font-weight: 700;
 }
 
-.checkbox-group {
-  flex-direction: row !important;
+.u-tag {
+  background: var(--surface-muted);
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--text-tertiary);
+  border-left: 1px solid var(--border-color);
 }
 
-.checkbox-group label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
+.troubleshooting-card {
+  background: rgba(239, 68, 68, 0.05);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 20px;
+  padding: 24px;
 }
 
-.checkbox-group input[type="checkbox"] {
-  accent-color: var(--primary-color);
-  width: 18px;
-  height: 18px;
-}
+.troubleshooting-card h4 { color: #ef4444; margin: 0 0 8px 0; }
+.actions-grid { display: flex; gap: 16px; margin-top: 20px; }
 
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 24px;
-}
+/* Transitions */
+.slide-up-enter-active, .slide-up-leave-active { transition: all 0.4s ease; }
+.slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(20px); }
 
-.btn-secondary {
-  background: var(--background-elevated);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
-}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideDown { from { opacity: 0; height: 0; transform: translateY(-10px); } to { opacity: 1; height: auto; transform: translateY(0); } }
 
-.btn-secondary:hover {
-  background: var(--surface-hover);
-}
-
-/* Modal Transitions */
-.modal-enter-active,
-.modal-leave-active {
-  transition: all 0.3s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-from .modal,
-.modal-leave-to .modal {
-  transform: scale(0.95) translateY(-20px);
+@media (max-width: 1000px) {
+  .status-layout { grid-template-columns: 1fr; }
+  .quick-stats-row { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 768px) {
-  .form-row {
-    flex-direction: column;
+  .header h2 {
+    font-size: 24px;
   }
 
-  .stats-grid {
+  .tabs-nav {
+    width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    display: flex;
+    padding: 6px;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .tabs-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-btn {
+    padding: 8px 16px;
+    flex-shrink: 0;
+  }
+
+  .glass-card {
+    padding: 20px;
+  }
+
+  .hero-top {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .hero-actions .btn {
+    width: 100%;
+  }
+
+  .exec-stats-grid {
     grid-template-columns: 1fr;
   }
 
-  .history-table th,
-  .history-table td {
-    padding: 12px 16px;
+  .quick-stats-row {
+    grid-template-columns: 1fr;
   }
 
-  .playlist-card {
+  .download-card {
+    padding: 24px 20px;
+  }
+
+  .card-header h3 {
+    font-size: 22px;
+  }
+
+  .visual-progress {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .playlist-grid-modern {
+    grid-template-columns: 1fr;
+  }
+
+  .setting-item-v2 {
     flex-direction: column;
     align-items: flex-start;
     gap: 16px;
   }
 
-  .playlist-actions {
-    margin-left: 0;
+  .s-control {
     width: 100%;
-    justify-content: flex-start;
+    display: flex;
+    justify-content: flex-end;
   }
 
-  .auto-download-grid {
+  .actions-grid {
     flex-direction: column;
-    align-items: flex-start;
+  }
+
+  .history-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .history-table-new th:nth-child(2),
+  .history-table-new td:nth-child(2) {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .tab-btn span {
+    display: none;
+  }
+  
+  .tab-btn {
+    padding: 10px;
   }
 }
 </style>

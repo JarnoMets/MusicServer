@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 /// Shared state for the auto-genre lookup scheduler
 pub struct AutoGenreLookupState {
+    #[allow(dead_code)]
     pub is_running: Arc<AtomicBool>,
     pub artists_processed: Arc<AtomicI32>,
     pub lookup_errors: Arc<AtomicI32>,
@@ -31,6 +32,7 @@ impl AutoGenreLookupState {
         self.lookup_errors.store(0, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     pub fn set_restart_interval(&self, secs: u64) {
         self.restart_interval_secs.store(secs, Ordering::Relaxed);
     }
@@ -100,7 +102,12 @@ pub fn start_scheduler(pool: PgPool) -> Arc<AutoGenreLookupState> {
 
             // Process one artist with unknown/default genre
             if let Err(e) = process_one_unknown_artist(&pool).await {
-                log::warn!("Error processing unknown artist: {}", e);
+                if e.contains("429") || e.contains("Too Many Requests") {
+                    log::warn!("Auto-genre lookup hit rate limit. Pausing for 60 seconds...");
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                } else {
+                    log::warn!("Error processing unknown artist: {}", e);
+                }
                 state_clone.lookup_errors.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -161,6 +168,7 @@ async fn process_one_unknown_artist(pool: &PgPool) -> Result<(), String> {
 }
 
 /// Get the current state of the auto-genre lookup
+#[allow(dead_code)]
 pub fn get_state(state: &AutoGenreLookupState) -> serde_json::Value {
     serde_json::json!({
         "is_running": state.is_running.load(Ordering::Relaxed),

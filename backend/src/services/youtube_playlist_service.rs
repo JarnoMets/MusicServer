@@ -145,6 +145,7 @@ pub async fn mark_synced(db: &Database, id: Uuid) -> Result<(), sqlx::Error> {
 }
 
 /// Get all playlists with auto_download enabled
+#[allow(dead_code)]
 pub async fn get_auto_download_playlists(db: &Database) -> Result<Vec<YoutubePlaylist>, sqlx::Error> {
     sqlx::query_as::<_, YoutubePlaylist>(
         r#"

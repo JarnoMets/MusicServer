@@ -1,6 +1,7 @@
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
-  const component: DefineComponent<{}, {}, any>
+  // Use safer, non-empty object types and avoid `any` to reduce lint warnings
+  const component: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>
   export default component
 }
 

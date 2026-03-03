@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import type { MusicFile, PlaylistSummary } from '../../types/MusicTab'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import type { MusicFile, PlaylistSummary } from '../../types'
 import { formatDuration, formatDate } from '../../utils/musicFormatters'
 import Icon from '../../shared/components/Icons.vue'
 import { usePlayer } from '../../composables/usePlayer'
@@ -11,119 +11,201 @@ interface Props {
   loading: boolean
   playlistMenuOpen: string | null
   canEdit?: boolean
+  sort?: 'title' | 'artist' | 'album' | 'genre' | 'created_at' | 'updated_at' | 'release_date' | 'duration' | 'bpm'
+  order?: 'asc' | 'desc'
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  canEdit: false
+  canEdit: false,
+  sort: 'title',
+  order: 'asc'
 })
 
 const emit = defineEmits<{
   'track:play': [track: MusicFile]
   'track:edit': [track: MusicFile]
   'track:delete': [track: MusicFile]
+  'track:details': [track: MusicFile]
   'track:confirm-genre': [track: MusicFile]
+  'track:contextmenu': [track: MusicFile, event: MouseEvent]
+  'tracks:contextmenu': [tracks: MusicFile[], event: MouseEvent]
   'playlist:toggle': [trackId: string]
   'playlist:add': [trackId: string, playlistId: string]
+  'update:sort': [value: 'title' | 'artist' | 'album' | 'genre' | 'created_at' | 'updated_at' | 'release_date' | 'duration' | 'bpm']
+  'update:order': [value: 'asc' | 'desc']
   reset: []
 }>()
 
-// Get player state to highlight currently playing track
-const { state: playerState, setPlayingStatus } = usePlayer()
+const player = usePlayer()
+const isCurrentTrack = (track: MusicFile) =>
+  player.state.currentSource?.type === 'local' && player.state.currentSource.id === track.id
+const isPlaying = computed(() => player.state.isPlaying)
 
-// Computed helpers for player state
-const currentTrack = computed(() => {
-  const source = playerState.currentSource
-  return source?.type === 'local' ? source : null
-})
+// Selection state
+const selectedIds = ref<Set<string>>(new Set())
+const lastSelectedIndex = ref<number | null>(null)
 
-const isPlaying = computed(() => playerState.isPlaying)
+const isSelected = (track: MusicFile) => selectedIds.value.has(track.id)
 
-// Toggle play/pause
-const togglePlayPause = () => {
-  setPlayingStatus(!playerState.isPlaying)
+// Clear selection when tracks change (keep only valid ids)
+watch(
+  () => props.tracks,
+  () => {
+    const validIds = new Set(props.tracks.map((t) => t.id))
+    const newSelection = new Set<string>()
+    selectedIds.value.forEach((id) => {
+      if (validIds.has(id)) newSelection.add(id)
+    })
+    selectedIds.value = newSelection
+  },
+  { deep: false },
+)
+
+// Local sorting state (used only for UI controls)
+const sortKey = ref(props.sort)
+const sortOrder = ref(props.order)
+
+watch(
+  () => props.sort,
+  (newVal) => {
+    if (newVal) sortKey.value = newVal
+  },
+)
+watch(
+  () => props.order,
+  (newVal) => {
+    if (newVal) sortOrder.value = newVal
+  },
+)
+
+// Display tracks: parent usually provides pre-sorted subset. Use that directly.
+const displayTracks = computed(() => props.tracks)
+
+const handleRowClick = (index: number, event: MouseEvent) => {
+  const track = displayTracks.value[index]
+
+  if (event.shiftKey && lastSelectedIndex.value !== null) {
+    const start = Math.min(lastSelectedIndex.value, index)
+    const end = Math.max(lastSelectedIndex.value, index)
+    for (let i = start; i <= end; i++) selectedIds.value.add(displayTracks.value[i].id)
+  } else if (event.ctrlKey || event.metaKey) {
+    if (selectedIds.value.has(track.id)) selectedIds.value.delete(track.id)
+    else {
+      selectedIds.value.add(track.id)
+      lastSelectedIndex.value = index
+    }
+  } else {
+    selectedIds.value.clear()
+    selectedIds.value.add(track.id)
+    lastSelectedIndex.value = index
+  }
 }
 
-// Keyboard navigation
-const selectedIndex = ref(-1)
+const handleRowDoubleClick = (track: MusicFile) => {
+  handleTogglePlay(track)
+}
 
-const handleKeydown = (e: KeyboardEvent) => {
-  // Don't handle if user is in an input
-  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
-    return
+const handleTitleClick = (track: MusicFile, event: MouseEvent) => {
+  event.stopPropagation()
+  handleTogglePlay(track)
+}
+
+const handleTogglePlay = (track: MusicFile) => {
+  if (isCurrentTrack(track)) {
+    player.setPlayingStatus(!player.state.isPlaying)
+  } else {
+    emit('track:play', track)
   }
-  
-  if (props.tracks.length === 0) return
-  
-  switch (e.key) {
-    case 'ArrowDown':
-      e.preventDefault()
-      selectedIndex.value = Math.min(selectedIndex.value + 1, props.tracks.length - 1)
-      break
-    case 'ArrowUp':
-      e.preventDefault()
-      selectedIndex.value = Math.max(selectedIndex.value - 1, 0)
-      break
-    case 'Enter':
-      if (selectedIndex.value >= 0 && selectedIndex.value < props.tracks.length) {
-        emit('track:play', props.tracks[selectedIndex.value])
-      }
-      break
-    case ' ':
-      // Space to play/pause current track
-      if (currentTrack.value) {
-        e.preventDefault()
-        togglePlayPause()
-      } else if (selectedIndex.value >= 0) {
-        e.preventDefault()
-        emit('track:play', props.tracks[selectedIndex.value])
-      }
-      break
+}
+
+const handleContextMenu = (track: MusicFile, event: MouseEvent) => {
+  event.preventDefault()
+  if (!selectedIds.value.has(track.id)) {
+    selectedIds.value.clear()
+    selectedIds.value.add(track.id)
+    const idx = displayTracks.value.findIndex((t) => t.id === track.id)
+    if (idx !== -1) lastSelectedIndex.value = idx
+  }
+
+  if (selectedIds.value.size > 1) {
+    const selectedTracksList = props.tracks.filter((t) => selectedIds.value.has(t.id))
+    emit('tracks:contextmenu', selectedTracksList, event)
+  } else {
+    emit('track:contextmenu', track, event)
+  }
+}
+
+const handleSort = (
+  column: 'title' | 'artist' | 'album' | 'genre' | 'created_at' | 'updated_at' | 'release_date' | 'duration' | 'bpm',
+) => {
+  if (sortKey.value === column) sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  else {
+    sortKey.value = column
+    sortOrder.value = 'asc'
+  }
+  emit('update:sort', sortKey.value)
+  emit('update:order', sortOrder.value)
+}
+
+const onGlobalClick = (e: MouseEvent) => {
+  const target = e.target as HTMLElement
+  if (!target.closest('.music-table')) {
+    selectedIds.value.clear()
+    lastSelectedIndex.value = null
+  }
+}
+
+const onKeyDown = (e: KeyboardEvent) => {
+  if (e.code === 'Space' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName || '')) {
+    e.preventDefault()
+    if (selectedIds.value.size === 1) {
+      const id = Array.from(selectedIds.value)[0]
+      const track = props.tracks.find(t => t.id === id)
+      if (track) handleTogglePlay(track)
+    } else if (player.state.currentSource) {
+      player.setPlayingStatus(!player.state.isPlaying)
+    }
+  } else if (e.code === 'Enter' && selectedIds.value.size === 1) {
+    const id = Array.from(selectedIds.value)[0]
+    const track = props.tracks.find(t => t.id === id)
+    if (track) handleTogglePlay(track)
   }
 }
 
 onMounted(() => {
-  document.addEventListener('keydown', handleKeydown)
+  window.addEventListener('click', onGlobalClick)
+  window.addEventListener('keydown', onKeyDown)
 })
-
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('click', onGlobalClick)
+  window.removeEventListener('keydown', onKeyDown)
 })
-
-// Check if track is currently playing
-const isCurrentTrack = (track: MusicFile) => {
-  return currentTrack.value?.id === track.id
-}
-
-// Double-click to play
-const handleRowDoubleClick = (track: MusicFile) => {
-  emit('track:play', track)
-}
-
-// Click to select row
-const handleRowClick = (index: number) => {
-  selectedIndex.value = index
-}
 </script>
 
 <template>
-  <div class="music-container">
-    <div v-if="loading" class="loading-skeleton">
+  <div class="music-container" :class="{ 'is-loading': loading && tracks.length > 0 }">
+    <div v-if="loading && tracks.length > 0" class="loading-progress"></div>
+    <div v-if="loading && tracks.length === 0" class="loading-skeleton">
       <div class="skeleton-header">
         <div class="skeleton-bar"></div>
         <div class="skeleton-bar"></div>
         <div class="skeleton-bar"></div>
-        <div class="skeleton-bar"></div>
+        <div class="skeleton-bar short"></div>
+        <div class="skeleton-bar short"></div>
+        <div class="skeleton-bar short"></div>
         <div class="skeleton-bar short"></div>
         <div class="skeleton-bar short"></div>
       </div>
       <div v-for="i in 5" :key="i" class="skeleton-row">
         <div class="skeleton-cell title">
           <div class="skeleton-bar"></div>
-          <div class="skeleton-bar short"></div>
         </div>
         <div class="skeleton-cell"><div class="skeleton-bar"></div></div>
         <div class="skeleton-cell"><div class="skeleton-bar"></div></div>
+        <div class="skeleton-cell"><div class="skeleton-bar short"></div></div>
         <div class="skeleton-cell"><div class="skeleton-bar badge"></div></div>
+        <div class="skeleton-cell"><div class="skeleton-bar date"></div></div>
+        <div class="skeleton-cell"><div class="skeleton-bar short"></div></div>
         <div class="skeleton-cell"><div class="skeleton-bar short"></div></div>
         <div class="skeleton-cell actions">
           <div class="skeleton-circle"></div>
@@ -132,34 +214,78 @@ const handleRowClick = (index: number) => {
       </div>
     </div>
     <div v-else-if="tracks.length === 0" class="empty">
-      <div class="empty-icon">♪</div>
+      <div class="empty-icon"><Icon name="music" :size="48" /></div>
       <p>No tracks match your filters.</p>
       <button class="btn btn-outline" @click="emit('reset')">Reset filters</button>
     </div>
     <table v-else class="music-table">
       <thead>
         <tr>
-          <th>Title</th>
-          <th>Artist</th>
-          <th>Album</th>
-          <th>Genre</th>
-          <th>Duration</th>
+          <th class="sortable" @click="handleSort('title')">
+            <div class="header-content">
+              <span>Title</span>
+              <Icon v-if="sortKey === 'title'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
+          <th class="sortable" @click="handleSort('artist')">
+            <div class="header-content">
+              <span>Artist</span>
+              <Icon v-if="sortKey === 'artist'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
+          <th class="sortable" @click="handleSort('album')">
+            <div class="header-content">
+              <span>Album</span>
+              <Icon v-if="sortKey === 'album'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
+          <th class="sortable" @click="handleSort('release_date')">
+            <div class="header-content">
+              <span>Year</span>
+              <Icon v-if="sortKey === 'release_date'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
+          <th class="sortable" @click="handleSort('genre')">
+            <div class="header-content">
+              <span>Genre</span>
+              <Icon v-if="sortKey === 'genre'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
+          <th class="sortable" @click="handleSort('created_at')">
+            <div class="header-content">
+              <span>Added</span>
+              <Icon v-if="sortKey === 'created_at'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
+          <th class="sortable" @click="handleSort('duration')">
+            <div class="header-content">
+              <span>Duration</span>
+              <Icon v-if="sortKey === 'duration'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
+          <th class="sortable" @click="handleSort('bpm')">
+            <div class="header-content">
+              <span>BPM</span>
+              <Icon v-if="sortKey === 'bpm'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
+            </div>
+          </th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         <tr 
-          v-for="(track, index) in tracks" 
+          v-for="(track, index) in displayTracks" 
           :key="track.id" 
           :class="['music-row', { 
             'playing': isCurrentTrack(track), 
-            'selected': selectedIndex === index 
+            'selected': isSelected(track) 
           }]"
-          @click="handleRowClick(index)"
+          @click="handleRowClick(index, $event)"
           @dblclick="handleRowDoubleClick(track)"
+          @contextmenu="handleContextMenu(track, $event)"
           tabindex="0"
         >
-          <td>
+          <td :data-artist="track.artist || 'Unknown Artist'">
             <div class="title-cell">
               <div v-if="isCurrentTrack(track)" class="now-playing-indicator">
                 <span :class="['bar', { animating: isPlaying }]"></span>
@@ -167,13 +293,14 @@ const handleRowClick = (index: number) => {
                 <span :class="['bar', { animating: isPlaying }]"></span>
               </div>
               <div>
-                <div class="title">{{ track.title }}</div>
-                <div class="timestamp">Added {{ formatDate(track.created_at) }}</div>
+                <button class="title-link" @click="handleTitleClick(track, $event)">{{ track.title }}</button>
+                <div class="mobile-artist">{{ track.artist || 'Unknown Artist' }}</div>
               </div>
             </div>
           </td>
-          <td>{{ track.artist || '—' }}</td>
-          <td>{{ track.album || '—' }}</td>
+          <td>{{ track.artist || '&mdash;' }}</td>
+          <td>{{ track.album || '&mdash;' }}</td>
+          <td>{{ track.release_date ? new Date(track.release_date).getFullYear() : '&mdash;' }}</td>
           <td>
             <span v-if="track.genre" class="genre-badge">{{ track.genre }}</span>
             <span 
@@ -186,19 +313,25 @@ const handleRowClick = (index: number) => {
             </span>
             <span v-else class="genre-badge empty">Untagged</span>
           </td>
-          <td class="duration">
-            <Icon name="clock" :size="12" />
-            {{ formatDuration(track.duration) }}
+          <td class="date-cell">{{ formatDate(track.created_at) }}</td>
+          <td>
+            <div class="duration-cell">
+              <Icon name="clock" :size="12" />
+              {{ formatDuration(track.duration) }}
+            </div>
+          </td>
+          <td>
+            <span v-if="track.bpm" class="bpm-text">{{ Math.round(track.bpm) }}</span>
+            <span v-else class="bpm-text muted">&mdash;</span>
           </td>
           <td class="actions">
             <button 
               class="btn-icon play-btn" 
-              @click.stop="emit('track:play', track)" 
-              :title="isCurrentTrack(track) && isPlaying ? 'Now Playing' : 'Play'"
+              @click.stop="handleTogglePlay(track)" 
+              :title="isCurrentTrack(track) && isPlaying ? 'Pause' : 'Play'"
             >
               <Icon :name="isCurrentTrack(track) && isPlaying ? 'pause' : 'play'" :size="16" />
             </button>
-            
             <!-- Edit actions only when logged in -->
             <template v-if="canEdit">
               <div class="playlist-menu">
@@ -231,7 +364,7 @@ const handleRowClick = (index: number) => {
     
     <!-- Keyboard hints -->
     <div v-if="tracks.length > 0" class="keyboard-hints">
-      <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
+      <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> Navigate</span>
       <span><kbd>Enter</kbd> Play selected</span>
       <span><kbd>Space</kbd> Play/Pause</span>
       <span>Double-click to play</span>
@@ -246,16 +379,43 @@ const handleRowClick = (index: number) => {
   overflow: hidden;
   background: var(--surface-color);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  position: relative;
+  min-height: 400px; /* Prevent layout collapse during refreshes */
+}
+
+.music-container.is-loading .music-table {
+  opacity: 0.6;
+  pointer-events: none;
+  filter: grayscale(0.5);
+}
+
+.loading-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--primary-color);
+  z-index: 100;
+  animation: loading-bar 2s infinite ease-in-out;
+  transform-origin: 0% 50%;
+}
+
+@keyframes loading-bar {
+  0% { transform: scaleX(0); left: 0; }
+  50% { transform: scaleX(0.5); left: 25%; }
+  100% { transform: scaleX(0); left: 100%; }
 }
 
 /* Loading Skeleton */
 .loading-skeleton {
   padding: 0;
+  min-height: 400px;
 }
 
 .skeleton-header {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 100px 80px 120px;
+  grid-template-columns: 2fr 1fr 1fr 80px 100px 100px 100px 60px 80px 120px;
   gap: 20px;
   padding: 16px 24px;
   background: var(--background-elevated);
@@ -264,7 +424,7 @@ const handleRowClick = (index: number) => {
 
 .skeleton-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 100px 80px 120px;
+  grid-template-columns: 2fr 1fr 1fr 80px 100px 100px 100px 60px 80px 120px;
   gap: 20px;
   padding: 18px 24px;
   border-bottom: 1px solid var(--border-color);
@@ -303,6 +463,10 @@ const handleRowClick = (index: number) => {
   width: 70px;
   height: 24px;
   border-radius: 999px;
+}
+
+.skeleton-bar.date {
+  width: 80px;
 }
 
 .skeleton-circle {
@@ -358,6 +522,33 @@ const handleRowClick = (index: number) => {
   position: sticky;
   top: 0;
   z-index: 5;
+}
+
+.music-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s, color 0.2s;
+}
+
+.music-table th.sortable:hover {
+  background: var(--surface-hover);
+  color: var(--text-color);
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sort-icon {
+  color: var(--primary-color);
+  animation: fadeInIcon 0.15s ease-out;
+}
+
+@keyframes fadeInIcon {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .music-table th:first-child {
@@ -443,6 +634,30 @@ const handleRowClick = (index: number) => {
   line-height: 1.3;
 }
 
+.title-link {
+  font-weight: 600;
+  color: var(--text-color);
+  font-size: 15px;
+  line-height: 1.3;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.2s;
+}
+
+.title-link:hover {
+  color: var(--primary-light);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mobile-artist {
+  display: none;
+}
+
+.music-row.playing .title-link,
 .music-row.playing .title {
   color: #22c55e;
 }
@@ -453,7 +668,7 @@ const handleRowClick = (index: number) => {
   margin-top: 4px;
 }
 
-.duration {
+.duration-cell {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -508,6 +723,24 @@ const handleRowClick = (index: number) => {
   background: var(--background-elevated);
   color: var(--text-tertiary);
   border-color: var(--border-color);
+}
+
+.bpm-text {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.bpm-text.muted {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.loading-indicator {
+  font-style: italic;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  opacity: 0.6;
 }
 
 .actions {
@@ -685,40 +918,117 @@ const handleRowClick = (index: number) => {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 /* Responsive table */
-@media (max-width: 900px) {
-  .music-table th,
-  .music-table td {
-    padding: 12px 14px;
-  }
-  
-  .music-table th:first-child,
-  .music-row td:first-child {
-    padding-left: 16px;
-  }
-  
-  .btn-icon {
-    width: 34px;
-    height: 34px;
-  }
-  
-  .keyboard-hints {
+@media (max-width: 1200px) {
+  .music-table th:nth-child(6), /* Date Added */
+  .music-row td:nth-child(6) {
     display: none;
   }
-  
+}
+
+@media (max-width: 1024px) {
+  .music-table th:nth-child(3), /* Album */
+  .music-row td:nth-child(3),
+  .music-table th:nth-child(4), /* Year */
+  .music-row td:nth-child(4),
+  .music-table th:nth-child(7), /* BPM */
+  .music-row td:nth-child(7) {
+    display: none;
+  }
+
   .skeleton-header,
   .skeleton-row {
-    grid-template-columns: 2fr 1fr 80px 80px;
+    grid-template-columns: 2fr 1fr 100px 80px 120px;
+  }
+}
+
+@media (max-width: 768px) {
+  .music-table thead {
+    display: none; /* Hide headers on tablet/mobile */
+  }
+
+  .music-row {
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+    position: relative;
+  }
+
+  .music-row td {
+    display: block;
+    padding: 0 !important;
+    border: none;
+    width: 100%;
+  }
+
+  .music-row td:not(:first-child):not(.actions) {
+    display: none; /* Hide everything except Title/Artist and Actions */
+  }
+
+  .music-row td:first-child {
+    padding-right: 140px !important; /* Make room for actions */
+  }
+
+  .title-cell {
+    gap: 10px;
+  }
+
+  .title-link {
+    font-size: 16px;
+  }
+
+  .mobile-artist {
+    display: block;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  .actions {
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    transform: translateY(-50%);
+    background: transparent;
+    padding: 0 !important;
+  }
+
+  .btn-icon {
+    width: 42px; /* Bigger touch targets */
+    height: 42px;
+  }
+
+  .skeleton-header {
+    display: none;
+  }
+
+  .skeleton-row {
+    display: block;
+    padding: 16px;
+  }
+
+  .skeleton-cell:not(.title):not(.actions) {
+    display: none;
+  }
+
+  .skeleton-cell.actions {
+    position: absolute;
+    right: 16px;
+    top: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .music-row td:first-child {
+    padding-right: 100px !important;
   }
   
-  .skeleton-header > :nth-child(3),
-  .skeleton-header > :nth-child(4),
-  .skeleton-row > :nth-child(3),
-  .skeleton-row > :nth-child(4) {
-    display: none;
+  .btn-icon:not(.play-btn):not(.danger) {
+    display: none; /* Hide edit/playlist on very small screens, use long press or separate detail view? */
+    /* For now let's keep it simple and just show play/delete if space is tight */
   }
 }
 </style>

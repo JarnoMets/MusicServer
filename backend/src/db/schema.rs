@@ -23,9 +23,245 @@ pub async fn run_migrations(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
     migration_12_youtube_playlists(pool).await?;
     migration_13_auto_download_config(pool).await?;
     migration_14_file_hash(pool).await?;
+    migration_15_rekordbox_data(pool).await?;
+    migration_16_metadata_analyzed_flag(pool).await?;
+    migration_17_audit_logs(pool).await?;
+    migration_18_users(pool).await?;
+    migration_19_metadata_config(pool).await?;
+    migration_20_metadata_source_merge(pool).await?;
+    migration_21_default_discogs(pool).await?;
+    migration_22_metadata_suggestions(pool).await?;
+    migration_23_beat_grid_offset(pool).await?;
+    migration_24_beat_map(pool).await?;
+    migration_25_autoplay_settings(pool).await?;
 
     log::info!("Database schema setup completed successfully");
     Ok(())
+}
+
+async fn migration_18_users(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 18).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 18: Create users table for Google SSO");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS users (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            email VARCHAR(255) NOT NULL UNIQUE,
+            name VARCHAR(255) NOT NULL,
+            google_id VARCHAR(255) UNIQUE,
+            avatar_url TEXT,
+            is_admin BOOLEAN NOT NULL DEFAULT false,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 18, "Create users table for Google SSO").await
+}
+
+async fn migration_19_metadata_config(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 19).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 19: Create metadata_config table");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS metadata_config (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            release_date_source VARCHAR(50) NOT NULL DEFAULT 'musicbrainz',
+            genre_source VARCHAR(50) NOT NULL DEFAULT 'musicbrainz',
+            discogs_token TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Insert default config row
+    sqlx::query(
+        r#"
+        INSERT INTO metadata_config (id, release_date_source, genre_source)
+        VALUES (gen_random_uuid(), 'musicbrainz', 'musicbrainz')
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 19, "Create metadata_config table").await
+}
+
+async fn migration_20_metadata_source_merge(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 20).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 20: Merge release_date_source and genre_source into metadata_source");
+
+    // Check if table metadata_config exists and has release_date_source
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'metadata_config' AND column_name = 'release_date_source')"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if exists {
+        // Add metadata_source column
+        sqlx::query(
+            "ALTER TABLE metadata_config ADD COLUMN metadata_source VARCHAR(50) NOT NULL DEFAULT 'musicbrainz'"
+        )
+        .execute(pool)
+        .await?;
+
+        // Migrate data
+        sqlx::query(
+            "UPDATE metadata_config SET metadata_source = genre_source"
+        )
+        .execute(pool)
+        .await?;
+
+        // Drop old columns
+        sqlx::query(
+            "ALTER TABLE metadata_config DROP COLUMN release_date_source, DROP COLUMN genre_source"
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    record_migration(pool, 20, "Merge release_date_source and genre_source into metadata_source").await
+}
+
+async fn migration_21_default_discogs(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 21).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 21: Set default metadata source to Discogs");
+
+    // Update existing config to use Discogs by default
+    sqlx::query(
+        "UPDATE metadata_config SET metadata_source = 'discogs' WHERE metadata_source = 'musicbrainz'"
+    )
+    .execute(pool)
+    .await?;
+
+    // Also ensure the default of the column is 'discogs' for future rows
+    sqlx::query(
+        "ALTER TABLE metadata_config ALTER COLUMN metadata_source SET DEFAULT 'discogs'"
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 21, "Set default metadata source to Discogs").await
+}
+
+async fn migration_22_metadata_suggestions(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 22).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 22: Create metadata_suggestions table");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS metadata_suggestions (
+            music_file_id UUID PRIMARY KEY REFERENCES music_files(id) ON DELETE CASCADE,
+            release_date VARCHAR(255),
+            album VARCHAR(255),
+            genre VARCHAR(255),
+            confidence DOUBLE PRECISION NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 22, "Create metadata_suggestions table").await
+}
+
+async fn migration_23_beat_grid_offset(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 23).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 23: Add beat_grid_offset column to music_files");
+
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'beat_grid_offset') THEN
+                ALTER TABLE music_files ADD COLUMN beat_grid_offset DOUBLE PRECISION;
+            END IF;
+        END $$;
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 23, "Add beat_grid_offset column to music_files").await
+}
+
+async fn migration_24_beat_map(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 24).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 24: Add beat_map (JSONB) column to music_files");
+
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'beat_map') THEN
+                ALTER TABLE music_files ADD COLUMN beat_map JSONB;
+            END IF;
+        END $$;
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 24, "Add beat_map (JSONB) column to music_files").await
+}
+
+async fn migration_25_autoplay_settings(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 25).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 25: Create autoplay_settings table");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS autoplay_settings (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            match_time_seconds INTEGER NOT NULL DEFAULT 60,
+            overlap_seconds INTEGER NOT NULL DEFAULT 45,
+            exit_time_seconds INTEGER NOT NULL DEFAULT 30,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Insert a default row if none exists
+    sqlx::query(
+        r#"
+        INSERT INTO autoplay_settings (id, match_time_seconds, overlap_seconds, exit_time_seconds)
+        VALUES (gen_random_uuid(), 60, 45, 30)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 25, "Create autoplay_settings table").await
 }
 
 /// Create the schema version tracking table if it doesn't exist
@@ -440,6 +676,110 @@ async fn migration_14_file_hash(pool: &Pool<Postgres>) -> Result<(), sqlx::Error
     record_migration(pool, 14, "Add file_hash column to music_files").await
 }
 
+async fn migration_15_rekordbox_data(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 15).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 15: Add rekordbox analysis columns to music_files");
+
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'bpm') THEN
+                ALTER TABLE music_files ADD COLUMN bpm DOUBLE PRECISION;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'initial_key') THEN
+                ALTER TABLE music_files ADD COLUMN initial_key VARCHAR(10);
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'beat_grid_offset') THEN
+                ALTER TABLE music_files ADD COLUMN beat_grid_offset DOUBLE PRECISION;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'beat_map') THEN
+                ALTER TABLE music_files ADD COLUMN beat_map JSONB;
+            END IF;
+        END $$;
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 15, "Add rekordbox analysis columns to music_files").await
+}
+
+async fn migration_16_metadata_analyzed_flag(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 16).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 16: Add metadata_analyzed column to music_files");
+
+    // Add column if it doesn't exist
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'metadata_analyzed') THEN
+                ALTER TABLE music_files ADD COLUMN metadata_analyzed BOOLEAN DEFAULT FALSE;
+            END IF;
+        END $$;
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    // If bpm is > 0 or initial_key is not NONE, mark as analyzed
+    sqlx::query(
+        r#"
+        UPDATE music_files 
+        SET metadata_analyzed = TRUE 
+        WHERE (bpm IS NOT NULL AND bpm > 0) 
+           OR (initial_key IS NOT NULL AND initial_key != 'NONE')
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    // Clear markers
+    sqlx::query("UPDATE music_files SET bpm = NULL WHERE bpm = -1.0")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("UPDATE music_files SET initial_key = NULL WHERE initial_key = 'NONE'")
+        .execute(pool)
+        .await?;
+
+    record_migration(pool, 16, "Add metadata_analyzed column to music_files").await
+}
+
+async fn migration_17_audit_logs(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 17).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 17: Create audit_logs table for smart diffs");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            table_name TEXT NOT NULL,
+            record_id UUID NOT NULL,
+            action TEXT NOT NULL,
+            old_values JSONB,
+            new_values JSONB,
+            user_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool).await?;
+    
+    // Index on table_name and record_id for faster history lookups
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_logs_table_record ON audit_logs(table_name, record_id)").execute(pool).await?;
+
+    record_migration(pool, 17, "Create audit_logs table for smart diffs").await
+}
+
+
 /// Fix timestamp columns for databases that were created with TIMESTAMP instead of TIMESTAMPTZ
 /// This is safe to run multiple times - it only converts if needed
 pub async fn fix_timestamp_columns(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
@@ -457,11 +797,7 @@ pub async fn fix_timestamp_columns(pool: &Pool<Postgres>) -> Result<(), sqlx::Er
         for column in columns {
             // Check if column exists and is not already timestamptz
             let result: Option<String> = sqlx::query_scalar(
-                r#"
-                SELECT data_type 
-                FROM information_schema.columns 
-                WHERE table_name = $1 AND column_name = $2
-                "#
+                "SELECT data_type FROM information_schema.columns WHERE table_name = $1 AND column_name = $2"
             )
             .bind(table)
             .bind(column)

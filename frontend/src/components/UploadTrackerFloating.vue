@@ -20,7 +20,7 @@
         <div v-if="!isMinimized" class="tracker-content">
           <div class="progress-info">
             <p class="progress-text">
-              {{ uploadingCount }} uploading · {{ successCount }} completed · {{ queueCount }} queued
+              {{ uploadingCount }} uploading &middot; {{ successCount }} completed &middot; {{ queueCount }} queued
             </p>
             <p class="progress-percent">{{ totalProgress }}%</p>
           </div>
@@ -302,9 +302,17 @@ onMounted(() => {
   transform: scale(0.95);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .upload-tracker-floating {
-    max-width: 280px;
+    left: 16px !important;
+    right: 16px !important;
+    top: 16px !important; /* Top on mobile to avoid overlapping with bottom nav/player */
+    max-width: none;
+    width: auto;
+  }
+  
+  .tracker-header {
+    cursor: default;
   }
 }
 </style>
