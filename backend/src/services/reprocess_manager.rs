@@ -16,6 +16,7 @@ pub struct ReprocessProgress {
 
 #[derive(Clone)]
 pub struct ReprocessSession {
+    #[allow(dead_code)]
     pub id: String,
     pub tx: broadcast::Sender<ReprocessProgress>,
 }
@@ -24,7 +25,7 @@ type Sessions = RwLock<HashMap<String, ReprocessSession>>;
 
 static REPROCESS_SESSIONS: OnceCell<Arc<Sessions>> = OnceCell::new();
 
-fn get_sessions() -> Arc<Sessions> {
+pub fn get_sessions() -> Arc<Sessions> {
     REPROCESS_SESSIONS
         .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
         .clone()
@@ -57,7 +58,7 @@ pub async fn start_reprocess(db: Database) -> String {
         .await;
 
         let artists: Vec<String> = match artists_res {
-            Ok(list) => list.into_iter().filter_map(|o| o).collect(),
+            Ok(list) => list.into_iter().flatten().collect(),
             Err(_) => vec![],
         };
 
@@ -122,6 +123,7 @@ pub async fn start_reprocess(db: Database) -> String {
     session_id
 }
 
+#[allow(dead_code)]
 pub async fn subscribe(session_id: &str) -> Option<broadcast::Receiver<ReprocessProgress>> {
     let sessions = get_sessions();
     let map = sessions.read().await;

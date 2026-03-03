@@ -50,3 +50,10 @@ pids/
 **/secret*.yaml
 **/secret*.yml
 *.env.k8s
+
+# Secrets & tokens - NEVER commit these
+discogs_token
+sha256token
+client_secret_*.json
+all_tracks.json
+fix_labels.txt

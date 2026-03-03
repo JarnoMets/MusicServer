@@ -25,6 +25,14 @@
           <template v-if="currentSource">
             <span v-if="currentSource.type === 'local'">
               {{ currentSource.artist || 'Unknown Artist' }}
+              <span v-if="currentSource.bpm && currentSource.bpm > 0" class="track-meta-item">
+                <span class="meta-dot"></span>
+                {{ Math.round(currentSource.bpm) }} BPM
+              </span>
+              <span v-if="currentSource.initial_key && currentSource.initial_key !== 'NONE'" class="track-meta-item">
+                <span class="meta-dot"></span>
+                {{ currentSource.initial_key }}
+              </span>
             </span>
             <span v-else class="stream-badge">
               <span class="live-dot"></span>
@@ -80,6 +88,7 @@
         <span class="time-display">{{ formatTime(currentTime) }}</span>
         <div 
           class="progress-bar" 
+          :class="{ seeking: isSeeking }"
           ref="progressBarRef"
           @mousedown="startSeeking"
           @mouseenter="showHandle = true" 
@@ -128,6 +137,42 @@
 
     <!-- Volume Controls -->
     <div class="player-section player-volume">
+      <!-- Playlist management for current track -->
+      <div v-if="currentSource?.type === 'local'" class="playlist-mgmt">
+        <button
+          class="volume-btn"
+          @click="togglePlaylistPanel"
+          title="Manage playlists"
+        >
+          <Icon name="list" :size="18" />
+        </button>
+        <Transition name="panel-fade">
+          <div v-if="playlistPanelOpen" class="playlist-panel">
+            <div class="playlist-panel-header">
+              <span>Playlists</span>
+              <button class="panel-close" @click="playlistPanelOpen = false"><Icon name="x" :size="16" /></button>
+            </div>
+            <div v-if="loadingPlaylists" class="playlist-panel-loading">Loading&hellip;</div>
+            <div v-else class="playlist-panel-list">
+              <label
+                v-for="pl in allPlaylists"
+                :key="pl.id"
+                class="playlist-check"
+              >
+                <input
+                  type="checkbox"
+                  :checked="trackPlaylistIds.has(pl.id)"
+                  @change="handlePlaylistToggle(pl.id, !trackPlaylistIds.has(pl.id))"
+                />
+                <span>{{ pl.name }}</span>
+              </label>
+              <div v-if="allPlaylists.length === 0" class="playlist-panel-empty">No playlists yet</div>
+            </div>
+          </div>
+        </Transition>
+        <div v-if="playlistPanelOpen" class="playlist-backdrop" @click="playlistPanelOpen = false"></div>
+      </div>
+
       <button
         class="volume-btn"
         @click="toggleMute"
@@ -154,10 +199,12 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { usePlayer } from '../../composables/usePlayer'
 import { useToast } from '../../composables/useToast'
+import { musicAPI } from '../../api/music'
+import { formatTime } from '../../utils/audioHelpers'
 import Icon from './Icons.vue'
 
 const { state, stopPlayback: stop, setPlayingStatus, playPreviousTrack, playNextTrack, hasPreviousTrack, hasNextTrack, toggleAutoplay, toggleShuffle, cycleRepeat } = usePlayer()
-const { error } = useToast()
+const { error, success } = useToast()
 
 const audioRef = ref<HTMLAudioElement | null>(null)
 const progressBarRef = ref<HTMLElement | null>(null)
@@ -202,23 +249,68 @@ const handleEnded = () => {
         console.warn('Replay failed:', err)
       })
     }
-  } else if (state.autoplay) {
-    // Auto-play next track if autoplay is enabled
-    if (hasNext.value) {
-      playNext()
-    }
+  } else if (hasNext.value) {
+    // Always advance to the next track in the queue — the queue works like a
+    // regular sequential player.  The "autoplay" toggle is for continuing
+    // playback once the queue runs out (e.g. radio-like behaviour); within
+    // an existing queue we always advance.
+    playNext()
+  } else if (state.autoplay && state.repeat === 'all' && state.queue.length > 0) {
+    // Repeat-all is handled inside playNextTrack, but we need autoplay on
+    // to keep going when the queue is exhausted.
+    playNext()
   }
 }
 
 const handleTimeUpdate = () => {
   if (audioRef.value && !isSeeking.value) {
     currentTime.value = audioRef.value.currentTime
+    // Keep DJ Deck 1 position in sync while the regular player is active.
+    // This runs ~4×/sec (browser fires timeupdate every 250ms) — lightweight.
+    syncDeck1Position(audioRef.value.currentTime)
+  }
+}
+
+/**
+ * Sync DJ Deck 1's playback position to match the regular player.
+ * Only fires if the same track is loaded in both. The deck stays paused;
+ * we just keep its currentTime in sync so the user sees the right waveform
+ * position if they switch to /decks.
+ */
+let lastDeck1SyncTime = 0
+const syncDeck1Position = async (time: number) => {
+  // Throttle to once per second to keep it cheap
+  const now = Date.now()
+  if (now - lastDeck1SyncTime < 1000) return
+  lastDeck1SyncTime = now
+
+  if (!state.currentSource || state.currentSource.type !== 'local') return
+  const trackId = state.currentSource.id
+
+  try {
+    const { useDjStore } = await import('../../stores/djStore')
+    const { useDjAudioEngine } = await import('../../composables/useDjAudioEngine')
+    const store = useDjStore()
+    const engine = useDjAudioEngine()
+
+    const deck1 = store.getDeck(1)
+    // Only sync if deck 1 has the same track and isn't actively playing
+    if (deck1.track?.id !== trackId) return
+    if (deck1.playState === 'playing') return
+
+    engine.seekTo(1, time)
+  } catch {
+    // Non-critical
   }
 }
 
 const handleLoadedMetadata = () => {
   if (audioRef.value) {
-    duration.value = audioRef.value.duration
+    // Only update if the audio element gives us a valid duration
+    const audioDuration = audioRef.value.duration
+    if (audioDuration && isFinite(audioDuration) && audioDuration > 0) {
+      duration.value = audioDuration
+    }
   }
 }
 
@@ -267,38 +359,64 @@ const playNext = () => {
 }
 
 // Seeking with drag support
+// We track the seek target visually during drag but only commit the final
+// position to the audio element on mouseup.  This avoids the "screechy"
+// sound caused by rapidly updating currentTime while audio is playing.
+const seekVisualTime = ref<number | null>(null) // non-null while dragging
+let wasPlayingBeforeSeek = false
+
 const startSeeking = (event: MouseEvent) => {
   if (!audioRef.value || !duration.value || !isFinite(duration.value)) return
-  
+
   isSeeking.value = true
-  seekToPosition(event)
-  
-  // Add document-level listeners for drag
+  wasPlayingBeforeSeek = isPlaying.value
+
+  // Pause audio immediately so dragging doesn't produce sound
+  if (wasPlayingBeforeSeek) {
+    audioRef.value.pause()
+  }
+
+  updateSeekVisual(event)
+
   document.addEventListener('mousemove', handleSeekDrag)
   document.addEventListener('mouseup', stopSeeking)
 }
 
 const handleSeekDrag = (event: MouseEvent) => {
   if (!isSeeking.value) return
-  seekToPosition(event)
+  updateSeekVisual(event)
 }
 
 const stopSeeking = () => {
-  isSeeking.value = false
   document.removeEventListener('mousemove', handleSeekDrag)
   document.removeEventListener('mouseup', stopSeeking)
+
+  // Commit the final seek position
+  if (audioRef.value && seekVisualTime.value !== null && duration.value && isFinite(duration.value)) {
+    audioRef.value.currentTime = seekVisualTime.value
+    currentTime.value = seekVisualTime.value
+  }
+
+  seekVisualTime.value = null
+  isSeeking.value = false
+
+  // Resume playback if it was playing before the seek
+  if (wasPlayingBeforeSeek && audioRef.value) {
+    audioRef.value.play().catch(() => {})
+  }
 }
 
-const seekToPosition = (event: MouseEvent) => {
-  if (!audioRef.value || !progressBarRef.value || !duration.value || !isFinite(duration.value)) return
-  
+/** Update only the visual position (currentTime ref) — no audio seek yet. */
+const updateSeekVisual = (event: MouseEvent) => {
+  if (!progressBarRef.value || !duration.value || !isFinite(duration.value)) return
+
   const rect = progressBarRef.value.getBoundingClientRect()
   let percentage = (event.clientX - rect.left) / rect.width
   percentage = Math.max(0, Math.min(1, percentage))
-  
+
   const newTime = duration.value * percentage
-  audioRef.value.currentTime = newTime
-  currentTime.value = newTime
+  seekVisualTime.value = newTime
+  currentTime.value = newTime // drives the visual progress bar
 }
 
 const updateVolume = () => {
@@ -316,11 +434,56 @@ const toggleMute = () => {
   }
 }
 
-const formatTime = (seconds: number): string => {
-  if (!isFinite(seconds) || seconds < 0) return '0:00'
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
-  return `${mins}:${secs.toString().padStart(2, '0')}`
+// Playlist management
+const playlistPanelOpen = ref(false)
+const loadingPlaylists = ref(false)
+const allPlaylists = ref<{ id: string; name: string }[]>([])
+const trackPlaylistIds = ref<Set<string>>(new Set())
+
+const togglePlaylistPanel = async () => {
+  if (playlistPanelOpen.value) {
+    playlistPanelOpen.value = false
+    return
+  }
+  playlistPanelOpen.value = true
+  await loadPlaylistData()
+}
+
+const loadPlaylistData = async () => {
+  if (!currentSource.value || currentSource.value.type !== 'local') return
+  loadingPlaylists.value = true
+  try {
+    const [playlistsRes, trackPlRes] = await Promise.all([
+      musicAPI.getPlaylists(),
+      musicAPI.getTrackPlaylists(currentSource.value.id),
+    ])
+    allPlaylists.value = playlistsRes.data
+    trackPlaylistIds.value = new Set(trackPlRes.data.map((p: any) => p.id))
+  } catch (err) {
+    console.warn('Failed to load playlist data', err)
+  } finally {
+    loadingPlaylists.value = false
+  }
+}
+
+const handlePlaylistToggle = async (playlistId: string, add: boolean) => {
+  if (!currentSource.value || currentSource.value.type !== 'local') return
+  const trackId = currentSource.value.id
+  try {
+    if (add) {
+      await musicAPI.addPlaylistTrack(playlistId, { music_file_id: trackId })
+      trackPlaylistIds.value.add(playlistId)
+      success('Added to playlist')
+    } else {
+      await musicAPI.removePlaylistTrack(playlistId, trackId)
+      trackPlaylistIds.value.delete(playlistId)
+      success('Removed from playlist')
+    }
+    // Force reactivity
+    trackPlaylistIds.value = new Set(trackPlaylistIds.value)
+  } catch (err: any) {
+    error('Playlist update failed', err?.response?.data?.error || err?.message)
+  }
 }
 
 // Sync audio source when state changes
@@ -331,11 +494,25 @@ const syncAudioSource = () => {
     audioRef.value.src = state.audioUrl
     audioRef.value.load()
     audioRef.value.volume = volumeLevel.value / 100
-    const playPromise = audioRef.value.play()
-    if (playPromise !== undefined) {
-      playPromise.catch((err) => {
-        console.warn('Autoplay prevented:', err)
-      })
+    
+    // Reset duration and currentTime first
+    duration.value = 0
+    currentTime.value = 0
+    
+    // Set fallback duration from metadata (convert ms to s)
+    if (state.currentSource?.type === 'local' && state.currentSource.duration) {
+      duration.value = state.currentSource.duration / 1000
+    }
+    
+    // Only auto-play if the player state says we should be playing.
+    // This preserves pause state when navigating between views.
+    if (state.isPlaying) {
+      const playPromise = audioRef.value.play()
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn('Autoplay prevented:', err)
+        })
+      }
     }
   } else {
     audioRef.value.pause()
@@ -347,6 +524,15 @@ const syncAudioSource = () => {
 
 watch(() => state.updatedAt, () => {
   syncAudioSource()
+})
+
+watch(() => state.isPlaying, (playing) => {
+  if (!audioRef.value) return
+  if (playing && audioRef.value.paused) {
+    audioRef.value.play().catch(() => {})
+  } else if (!playing && !audioRef.value.paused) {
+    audioRef.value.pause()
+  }
 })
 
 onMounted(() => {
@@ -378,7 +564,7 @@ onUnmounted(() => {
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 1000;
+  z-index: 900;
   backdrop-filter: var(--glass-blur);
   transition: all var(--transition-base);
 }
@@ -468,6 +654,26 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.track-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.meta-dot {
+  width: 3px;
+  height: 3px;
+  background: var(--text-tertiary);
+  border-radius: 50%;
+  opacity: 0.5;
 }
 
 .stream-badge {
@@ -601,7 +807,16 @@ onUnmounted(() => {
   height: 100%;
   background: linear-gradient(90deg, var(--primary-color) 0%, var(--accent-color) 100%);
   border-radius: var(--radius-full);
+  /* transition is toggled off during seeking via .seeking class */
   transition: width 0.1s linear;
+}
+
+.progress-bar.seeking .progress-fill {
+  transition: none;
+}
+
+.progress-bar.seeking .progress-handle {
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .progress-handle {
@@ -746,16 +961,117 @@ onUnmounted(() => {
   box-shadow: 0 2px 6px var(--accent-muted);
 }
 
+/* Playlist management panel */
+.playlist-mgmt {
+  position: relative;
+}
+
+.playlist-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+
+.playlist-panel {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  width: 240px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.playlist-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.panel-close {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.panel-close:hover {
+  background: var(--background-elevated);
+  color: var(--text-color);
+}
+
+.playlist-panel-loading,
+.playlist-panel-empty {
+  padding: 16px 14px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.playlist-panel-list {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.playlist-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-color);
+  transition: background 0.15s;
+}
+
+.playlist-check:hover {
+  background: var(--background-elevated);
+}
+
+.playlist-check input[type="checkbox"] {
+  accent-color: var(--primary-color);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.panel-fade-enter-active,
+.panel-fade-leave-active {
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.panel-fade-enter-from,
+.panel-fade-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
 /* Responsive Design */
-@media (max-width: 900px) {
+@media (max-width: 768px) {
   .global-player {
     grid-template-columns: 1fr;
     gap: 12px;
     padding: 12px 16px 16px;
+    bottom: 64px;
+    border-radius: 16px 16px 0 0;
   }
 
   .player-info {
-    justify-content: center;
+    justify-content: flex-start;
   }
 
   .track-thumbnail {
@@ -763,23 +1079,30 @@ onUnmounted(() => {
     height: 48px;
   }
 
-  .thumbnail-icon {
-    font-size: 22px;
+  .player-controls {
+    order: -1; /* Progress bar and main controls at top? No, maybe track info at top. */
   }
 
   .player-volume {
     justify-content: center;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-color);
   }
 }
 
 @media (max-width: 480px) {
   .global-player {
     padding: 10px 12px 14px;
+    gap: 8px;
+  }
+
+  .player-options {
+    display: none; /* Hide shuffle/repeat on very small screens to save space */
   }
 
   .track-thumbnail {
-    width: 44px;
-    height: 44px;
+    width: 40px;
+    height: 40px;
   }
 
   .control-btn-main {

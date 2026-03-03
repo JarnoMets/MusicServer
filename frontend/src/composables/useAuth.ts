@@ -1,84 +1,34 @@
-import { ref, computed, readonly } from 'vue'
-import { setAdminToken } from '../api/music'
-
-// Module-level singleton state
-const token = ref<string | null>(localStorage.getItem('adminToken'))
-const isLoginModalOpen = ref(false)
-const loginError = ref<string | null>(null)
-const isLoggingIn = ref(false)
-
-// Initialize token from storage on load
-if (token.value) {
-  setAdminToken(token.value)
-}
+import { computed } from 'vue'
+import { useAuthStore } from '../stores/auth'
 
 export function useAuth() {
-  const isLoggedIn = computed(() => !!token.value)
+  const authStore = useAuthStore()
+  
+  const isLoggedIn = computed(() => authStore.isAuthenticated)
+  const isAdmin = computed(() => authStore.isAdmin)
+  const token = computed(() => authStore.token)
 
-  const login = async (inputToken: string): Promise<boolean> => {
-    isLoggingIn.value = true
-    loginError.value = null
-
-    try {
-      // Test the token by making an authenticated request
-      setAdminToken(inputToken)
-      
-      // Try to access an admin endpoint to verify token
-      const response = await fetch('/api/admin/genres', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${inputToken}`,
-        },
-      })
-
-      if (response.ok || response.status === 404) {
-        // Token is valid (404 just means no genres yet, but auth passed)
-        token.value = inputToken
-        localStorage.setItem('adminToken', inputToken)
-        isLoginModalOpen.value = false
-        return true
-      } else if (response.status === 401) {
-        setAdminToken(null)
-        loginError.value = 'Invalid token. Please check your admin token and try again.'
-        return false
-      } else {
-        setAdminToken(null)
-        loginError.value = 'Authentication failed. Please try again.'
-        return false
-      }
-    } catch (error) {
-      setAdminToken(null)
-      loginError.value = 'Connection error. Please check your network and try again.'
-      return false
-    } finally {
-      isLoggingIn.value = false
-    }
+  const login = async (code: string): Promise<boolean> => {
+    return authStore.loginWithGoogle(code)
   }
 
   const logout = () => {
-    token.value = null
-    localStorage.removeItem('adminToken')
-    setAdminToken(null)
+    authStore.logout()
   }
 
   const openLoginModal = () => {
-    loginError.value = null
-    isLoginModalOpen.value = true
+    // Redirect to login page instead of opening modal
+    window.location.href = '/login'
   }
 
   const closeLoginModal = () => {
-    isLoginModalOpen.value = false
-    loginError.value = null
+    // No-op for now
   }
 
   return {
-    // State
     isLoggedIn,
-    isLoginModalOpen: readonly(isLoginModalOpen),
-    loginError: readonly(loginError),
-    isLoggingIn: readonly(isLoggingIn),
-    
-    // Actions
+    isAdmin,
+    token,
     login,
     logout,
     openLoginModal,

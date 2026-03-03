@@ -43,15 +43,23 @@
                 Set Genre
               </button>
               <span v-else class="no-genre">No genre set</span>
-              <span class="separator">•</span>
+              <span class="separator">&bull;</span>
               <span>{{ artistTracks.length }} {{ artistTracks.length === 1 ? 'track' : 'tracks' }}</span>
+              <button 
+                v-if="artistTracks.length > 0"
+                class="btn btn-small btn-queue"
+                @click="addArtistToQueue"
+              >
+                <Icon name="plus-circle" :size="14" />
+                Add All to DJ Queue
+              </button>
             </div>
           </div>
         </div>
       </header>
 
       <!-- Artist Tracks -->
-      <div v-if="loadingDetail" class="loading-tracks">
+      <div v-if="loadingDetail && artistTracks.length === 0" class="loading-tracks">
         <div class="loading-spinner"></div>
         <span>Loading tracks...</span>
       </div>
@@ -60,82 +68,88 @@
         <h3>No tracks found</h3>
         <p>This artist has no tracks in your library</p>
       </div>
-      <div v-else class="artist-tracks">
-        <!-- Group tracks by category -->
-        <section v-if="originalTracks.length" class="track-section">
-          <h4 class="section-title">
-            <Icon name="mic" :size="16" />
-            Original Tracks ({{ originalTracks.length }})
-          </h4>
-          <div class="tracks-list">
-            <div 
-              v-for="(track, index) in originalTracks" 
-              :key="track.id" 
-              class="track-row"
-            >
-              <span class="track-number">{{ index + 1 }}</span>
-              <button class="track-play" @click="playTrack(track)">
-                <Icon name="play" :size="16" />
-              </button>
-              <div class="track-info">
-                <span class="track-title">{{ track.title }}</span>
-                <span class="track-album">{{ track.album || 'Unknown Album' }}</span>
+      <div v-else class="artist-tracks-container" :class="{ 'is-loading': loadingDetail }">
+        <div v-if="loadingDetail" class="loading-progress"></div>
+        <div class="artist-tracks">
+          <!-- Group tracks by category -->
+          <section v-if="originalTracks.length" class="track-section">
+            <h4 class="section-title">
+              <Icon name="mic" :size="16" />
+              Original Tracks ({{ originalTracks.length }})
+            </h4>
+            <div class="tracks-list">
+              <div 
+                v-for="(track, index) in originalTracks" 
+                :key="track.id" 
+                class="track-row"
+                @contextmenu.prevent="handleContextMenu(track, $event)"
+              >
+                <span class="track-number">{{ index + 1 }}</span>
+                <button class="track-play" @click="playTrack(track)">
+                  <Icon name="play" :size="16" />
+                </button>
+                <div class="track-info">
+                  <span class="track-title">{{ track.title }}</span>
+                  <span class="track-album">{{ track.album || 'Unknown Album' }}</span>
+                </div>
+                <span class="track-genre">{{ track.genre || track.guessed_genre || '&mdash;' }}</span>
+                <span class="track-duration">{{ formatDuration(track.duration) }}</span>
               </div>
-              <span class="track-genre">{{ track.genre || track.guessed_genre || '—' }}</span>
-              <span class="track-duration">{{ formatDuration(track.duration) }}</span>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section v-if="featuredTracks.length" class="track-section">
-          <h4 class="section-title">
-            <Icon name="users" :size="16" />
-            Featured On ({{ featuredTracks.length }})
-          </h4>
-          <div class="tracks-list">
-            <div 
-              v-for="(track, index) in featuredTracks" 
-              :key="track.id" 
-              class="track-row featured"
-            >
-              <span class="track-number">{{ index + 1 }}</span>
-              <button class="track-play" @click="playTrack(track)">
-                <Icon name="play" :size="16" />
-              </button>
-              <div class="track-info">
-                <span class="track-title">{{ track.title }}</span>
-                <span class="track-artist">{{ track.artist || 'Unknown Artist' }}</span>
+          <section v-if="featuredTracks.length" class="track-section">
+            <h4 class="section-title">
+              <Icon name="users" :size="16" />
+              Featured On ({{ featuredTracks.length }})
+            </h4>
+            <div class="tracks-list">
+              <div 
+                v-for="(track, index) in featuredTracks" 
+                :key="track.id" 
+                class="track-row featured"
+                @contextmenu.prevent="handleContextMenu(track, $event)"
+              >
+                <span class="track-number">{{ index + 1 }}</span>
+                <button class="track-play" @click="playTrack(track)">
+                  <Icon name="play" :size="16" />
+                </button>
+                <div class="track-info">
+                  <span class="track-title">{{ track.title }}</span>
+                  <span class="track-artist">{{ track.artist || 'Unknown Artist' }}</span>
+                </div>
+                <span class="track-genre">{{ track.genre || track.guessed_genre || '&mdash;' }}</span>
+                <span class="track-duration">{{ formatDuration(track.duration) }}</span>
               </div>
-              <span class="track-genre">{{ track.genre || track.guessed_genre || '—' }}</span>
-              <span class="track-duration">{{ formatDuration(track.duration) }}</span>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section v-if="remixTracks.length" class="track-section">
-          <h4 class="section-title">
-            <Icon name="refresh-cw" :size="16" />
-            Remixes ({{ remixTracks.length }})
-          </h4>
-          <div class="tracks-list">
-            <div 
-              v-for="(track, index) in remixTracks" 
-              :key="track.id" 
-              class="track-row remix"
-            >
-              <span class="track-number">{{ index + 1 }}</span>
-              <button class="track-play" @click="playTrack(track)">
-                <Icon name="play" :size="16" />
-              </button>
-              <div class="track-info">
-                <span class="track-title">{{ track.title }}</span>
-                <span class="track-artist">{{ track.artist || 'Unknown Artist' }}</span>
+          <section v-if="remixTracks.length" class="track-section">
+            <h4 class="section-title">
+              <Icon name="refresh-cw" :size="16" />
+              Remixes ({{ remixTracks.length }})
+            </h4>
+            <div class="tracks-list">
+              <div 
+                v-for="(track, index) in remixTracks" 
+                :key="track.id" 
+                class="track-row remix"
+                @contextmenu.prevent="handleContextMenu(track, $event)"
+              >
+                <span class="track-number">{{ index + 1 }}</span>
+                <button class="track-play" @click="playTrack(track)">
+                  <Icon name="play" :size="16" />
+                </button>
+                <div class="track-info">
+                  <span class="track-title">{{ track.title }}</span>
+                  <span class="track-artist">{{ track.artist || 'Unknown Artist' }}</span>
+                </div>
+                <span class="track-genre">{{ track.genre || track.guessed_genre || '&mdash;' }}</span>
+                <span class="track-duration">{{ formatDuration(track.duration) }}</span>
               </div>
-              <span class="track-genre">{{ track.genre || track.guessed_genre || '—' }}</span>
-              <span class="track-duration">{{ formatDuration(track.duration) }}</span>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
     </div>
 
@@ -307,7 +321,7 @@
                   />
                   <datalist id="artist-suggestions">
                     <option 
-                      v-for="artist in artists.filter(a => a.name !== selectedArtist?.name)" 
+                      v-for="artist in store.artists.filter(a => a.name !== selectedArtist?.name)" 
                       :key="artist.name" 
                       :value="artist.name" 
                     />
@@ -329,17 +343,83 @@
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Context Menu -->
+    <TrackContextMenu
+      ref="contextMenuRef"
+      :is-admin="canEdit"
+      :playlists="playlists"
+      :genres="canonicalGenres"
+      :date-suggestion="releaseDateSuggestion"
+      :looking-up-date="lookingUpReleaseDate"
+      @play="playTrack"
+      @details="handleTrackDetails"
+      @edit="openEdit"
+      @delete="deleteTrack"
+      @confirm-genre="handleConfirmGenre"
+      @playlist:add="(trackId, playlistId) => addTrackToPlaylist(trackId, playlistId)"
+      @set-genre="(track, genre) => setTrackGenre(track, genre)"
+      @lookup-date="handleLookupDate"
+      @apply-date="handleApplyDate"
+      @queue:add="handleAddToQueue"
+    />
+
+    <!-- Track Details Modal -->
+    <TrackDetailsModal
+      :is-open="detailsModal.isOpen"
+      :track="detailsModal.track || undefined"
+      @close="detailsModal.isOpen = false"
+      @edit="openEdit"
+      @playlist:add="addTrackToPlaylist"
+    />
+
+    <!-- Edit Drawer -->
+    <EditTrackDrawer
+      v-if="canEdit"
+      :edit-state="editState"
+      :saving="editState.saving"
+      :genres="canonicalGenres"
+      :release-date-suggestion="releaseDateSuggestion"
+      :looking-up-release-date="lookingUpReleaseDate"
+      @update:title="v => editState.form.title = v"
+      @update:artist="v => editState.form.artist = v"
+      @update:album="v => editState.form.album = v"
+      @update:genre="v => editState.form.genre = v"
+      @update:release_date="v => editState.form.release_date = v"
+      @apply-suggestion="applySuggestedReleaseDate"
+      @save="saveEdit"
+      @close="closeEdit"
+    />
+
+    <!-- Confirm Genre Modal -->
+    <ConfirmGenreModal
+      v-if="canEdit"
+      :is-open="confirmGenreModal.isOpen"
+      :track="confirmGenreModal.track || undefined"
+      @close="confirmGenreModal.isOpen = false"
+      @confirm="handleGenreConfirmed"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { musicAPI } from '../../api/music'
+import { useMusicStore } from '../../stores/musicStore'
 import { usePlayer } from '../../composables/usePlayer'
 import { useToast } from '../../composables/useToast'
 import { useAuth } from '../../composables/useAuth'
+import { useMusicData } from '../../composables/useMusicData'
+import { useTrackEdit } from '../../composables/useTrackEdit'
+import { useTrackActions } from '../../composables/useTrackActions'
+import { useDjStore } from '../../stores/djStore'
 import { formatDuration } from '../../utils/musicFormatters'
+import type { ArtistSummary, MusicFile } from '../../types'
 import Icon from '../../shared/components/Icons.vue'
+import TrackContextMenu from '../music/TrackContextMenu.vue'
+import TrackDetailsModal from '../music/TrackDetailsModal.vue'
+import EditTrackDrawer from '../music/EditTrackDrawer.vue'
+import ConfirmGenreModal from '../music/ConfirmGenreModal.vue'
 
 interface Props {
   canEdit?: boolean
@@ -353,24 +433,7 @@ const props = withDefaults(defineProps<Props>(), {
 const { isLoggedIn } = useAuth()
 const canEdit = computed(() => props.canEdit || isLoggedIn.value)
 
-interface ArtistSummary {
-  name: string
-  genre: string | null
-  song_count: number
-}
-
-interface MusicFile {
-  id: string
-  title: string
-  artist?: string | null
-  album?: string | null
-  genre?: string | null
-  guessed_genre?: string | null
-  duration?: number | null
-  file_path: string
-}
-
-const artists = ref<ArtistSummary[]>([])
+const store = useMusicStore()
 const selectedArtist = ref<ArtistSummary | null>(null)
 const artistTracks = ref<MusicFile[]>([])
 const loading = ref(false)
@@ -388,6 +451,79 @@ const isReprocessing = ref(false)
 
 const { playLocalTrack } = usePlayer()
 const { success, error } = useToast()
+const djStore = useDjStore()
+
+// Integrated tools from MusicTab
+const { playlists, canonicalGenres, fetchMusic } = useMusicData()
+const {
+  editState,
+  releaseDateSuggestion,
+  lookingUpReleaseDate,
+  openEdit,
+  closeEdit,
+  saveEdit,
+  applySuggestedReleaseDate,
+  lookupReleaseDate,
+  quickSetDate,
+} = useTrackEdit(() => {
+  if (selectedArtist.value) openArtistDetail(selectedArtist.value)
+  fetchMusic()
+})
+
+const { deleteTrack, addTrackToPlaylist, setTrackGenre } = useTrackActions(() => {
+  if (selectedArtist.value) openArtistDetail(selectedArtist.value)
+  fetchMusic()
+})
+
+const contextMenuRef = ref<InstanceType<typeof TrackContextMenu> | null>(null)
+const detailsModal = ref({
+  isOpen: false,
+  track: null as any | null,
+})
+const confirmGenreModal = ref({
+  isOpen: false,
+  track: null as any | null,
+})
+
+const handleContextMenu = (track: any, event: MouseEvent) => {
+  releaseDateSuggestion.value = null
+  contextMenuRef.value?.open(track, event)
+}
+
+const handleTrackDetails = (track: any) => {
+  detailsModal.value = { isOpen: true, track }
+}
+
+const handleLookupDate = (track: any) => {
+  lookupReleaseDate(track.title, track.artist || undefined)
+}
+
+const handleApplyDate = async (track: any, date: string) => {
+  await quickSetDate(track.id, date)
+  releaseDateSuggestion.value = null
+}
+
+const handleConfirmGenre = (track: any) => {
+  confirmGenreModal.value = { isOpen: true, track }
+}
+
+const handleGenreConfirmed = () => {
+  confirmGenreModal.value.isOpen = false
+  if (selectedArtist.value) openArtistDetail(selectedArtist.value)
+  fetchMusic()
+}
+
+// DJ Queue handler
+const handleAddToQueue = (track: MusicFile) => {
+  djStore.addToQueue(track)
+  success('Added to DJ Queue', `"${track.title}" added to the DJ queue`)
+}
+
+const addArtistToQueue = () => {
+  if (artistTracks.value.length === 0) return
+  djStore.addTracksToQueue(artistTracks.value)
+  success('Added to DJ Queue', `${artistTracks.value.length} tracks added to the DJ queue`)
+}
 
 // Debounce search
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
@@ -414,7 +550,7 @@ const filteredArtists = computed(() => {
 
 // Sort artists based on selected sort option
 const sortedArtists = computed(() => {
-  const list = [...artists.value]
+  const list = [...store.artists]
   
   switch (sortBy.value) {
     case 'tracks-desc':
@@ -484,18 +620,7 @@ const getInitials = (name: string) => {
     .toUpperCase()
 }
 
-const fetchArtists = async () => {
-  try {
-    loading.value = true
-    const response = await musicAPI.getArtists()
-    artists.value = response.data
-  } catch (err: any) {
-    console.error('Error fetching artists:', err)
-    error('Failed to load artists', err?.response?.data?.error || err?.message)
-  } finally {
-    loading.value = false
-  }
-}
+// artist loading is handled by the Pinia store (store.refreshArtists)
 
 const fetchGenres = async () => {
   try {
@@ -524,7 +649,7 @@ const closeArtistDetail = () => {
   selectedArtist.value = null
   artistTracks.value = []
   // Refresh list in case genres were changed
-  fetchArtists()
+  store.refreshArtists()
 }
 
 const playTrack = (track: MusicFile) => {
@@ -532,6 +657,7 @@ const playTrack = (track: MusicFile) => {
     id: track.id,
     title: track.title,
     artist: track.artist,
+    duration: track.duration,
   })
 }
 
@@ -555,10 +681,10 @@ const saveArtistGenre = async () => {
     // Update local state
     selectedArtist.value.genre = genreInput.value.trim()
     
-    // Update in the list too
-    const idx = artists.value.findIndex(a => a.name === selectedArtist.value?.name)
+    // Update in the store's artists list too
+    const idx = store.artists.findIndex(a => a.name === selectedArtist.value?.name)
     if (idx !== -1) {
-      artists.value[idx].genre = genreInput.value.trim()
+      store.artists[idx].genre = genreInput.value.trim()
     }
     
     success('Genre updated', `Genre set to "${genreInput.value.trim()}" for ${selectedArtist.value.name}`)
@@ -602,7 +728,7 @@ const saveArtistRename = async () => {
     closeRenameEditor()
     // Close detail and refresh list
     selectedArtist.value = null
-    await fetchArtists()
+    await store.refreshArtists()
   } catch (err: any) {
     console.error('Error renaming artist:', err)
     error('Failed to rename artist', err?.response?.data?.error || err?.message)
@@ -622,7 +748,7 @@ const reprocessAllArtists = async () => {
       result.message || `Added ${result.artists_added || 0} new artists`
     )
     // Refresh the artist list
-    await fetchArtists()
+    await store.refreshArtists()
   } catch (err: any) {
     console.error('Error reprocessing artists:', err)
     error('Failed to reprocess artists', err?.response?.data?.error || err?.message)
@@ -632,7 +758,9 @@ const reprocessAllArtists = async () => {
 }
 
 onMounted(() => {
-  fetchArtists()
+  // Initialize store (loads cached tracks and subscribes to updates) then refresh artists
+  // store.init() is idempotent - safe to call from multiple tabs
+  store.init().then(() => store.refreshArtists())
   fetchGenres()
 })
 </script>
@@ -667,6 +795,7 @@ onMounted(() => {
 .header-actions {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .search-box {
@@ -695,33 +824,6 @@ onMounted(() => {
   outline: none;
 }
 
-.search-box input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.clear-search {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.clear-search:hover {
-  color: var(--text-color);
-  background: var(--surface-hover);
-}
-
-.sort-controls {
-  display: flex;
-  align-items: center;
-}
-
 .sort-select {
   padding: 10px 14px;
   background: var(--surface-color);
@@ -731,115 +833,136 @@ onMounted(() => {
   font-weight: 500;
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
-.sort-select:hover {
-  border-color: var(--border-hover);
+/* Artists Grid */
+.artists-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.artist-card {
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.artist-card:hover {
+  border-color: var(--primary-color);
+  transform: translateY(-2px);
   background: var(--surface-hover);
 }
 
-.sort-select:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
+.artist-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--primary-glow, rgba(139, 92, 246, 0.15));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--primary-color);
+  flex-shrink: 0;
+  font-size: 1.2rem;
 }
 
-/* Artist Detail View */
+.artist-avatar.large {
+  width: 100px;
+  height: 100px;
+  font-size: 2.5rem;
+}
+
+.artist-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.artist-info h3 {
+  margin: 0 0 4px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artist-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+}
+
+.genre-badge {
+  background: var(--accent-muted, rgba(139, 92, 246, 0.15));
+  color: var(--primary-color);
+  padding: 1px 8px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.view-icon {
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: all 0.2s ease;
+}
+
+.artist-card:hover .view-icon {
+  opacity: 1;
+  transform: translateX(4px);
+}
+
+/* Detail View */
 .artist-detail {
   display: flex;
   flex-direction: column;
   gap: 24px;
 }
 
+.detail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .btn-back {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  padding: 8px 0;
-  transition: all 0.2s ease;
-}
-
-.btn-back:hover {
-  color: var(--primary-color);
-}
-
-.detail-header {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  padding: 4px 0;
+  width: fit-content;
 }
 
 .detail-title-section {
   display: flex;
-  align-items: flex-start;
-  gap: 20px;
-}
-
-.artist-avatar {
-  width: 48px;
-  height: 48px;
-  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
-  border-radius: 50%;
-  display: flex;
   align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: 700;
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
-.artist-avatar.large {
-  width: 100px;
-  height: 100px;
-  font-size: 32px;
-  border-radius: 50%;
+  gap: 24px;
 }
 
 .artist-name-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .artist-name-row h2 {
   margin: 0;
-  font-size: 1.75rem;
-  font-weight: 700;
-}
-
-.btn-icon-small {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid var(--border-color);
-  background: var(--surface-color);
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  opacity: 0.7;
-}
-
-.btn-icon-small:hover {
-  opacity: 1;
-  background: var(--surface-hover);
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-}
-
-.detail-title-section h2 {
-  margin: 0 0 8px 0;
-  font-size: 1.75rem;
+  font-size: 2rem;
   font-weight: 700;
 }
 
@@ -847,92 +970,37 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--text-tertiary);
-  font-size: 14px;
   margin-top: 8px;
+  color: var(--text-secondary);
 }
 
-.separator {
-  color: var(--text-tertiary);
+.btn-queue {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.btn-queue:hover {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.5);
 }
 
 .genre-tag {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  background: var(--accent-muted, rgba(139, 92, 246, 0.15));
-  color: var(--primary-color);
-  border-radius: 20px;
-  font-weight: 500;
-  font-size: 13px;
-}
-
-.genre-tag.editable {
+  background: var(--surface-muted);
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 0.9rem;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
 .genre-tag.editable:hover {
-  background: var(--accent-muted, rgba(139, 92, 246, 0.25));
+  background: var(--surface-hover);
+  color: var(--primary-color);
 }
 
-.genre-tag .edit-icon {
-  opacity: 0;
-  margin-left: 4px;
-  transition: opacity 0.2s ease;
-}
-
-.genre-tag.editable:hover .edit-icon {
-  opacity: 1;
-}
-
-.no-genre {
-  color: var(--text-tertiary);
-  font-style: italic;
-}
-
-/* Loading tracks */
-.loading-tracks {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 60px 20px;
-  color: var(--text-secondary);
-}
-
-.loading-spinner {
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--primary-color);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Empty artist */
-.empty-artist {
-  text-align: center;
-  padding: 60px 20px;
-  color: var(--text-tertiary);
-}
-
-.empty-artist h3 {
-  margin: 16px 0 8px;
-  color: var(--text-color);
-}
-
-.empty-artist p {
-  margin: 0;
-  color: var(--text-secondary);
-}
-
-/* Track sections */
 .track-section {
   margin-bottom: 32px;
 }
@@ -940,31 +1008,27 @@ onMounted(() => {
 .section-title {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 0 0 16px 0;
-  font-size: 14px;
+  gap: 8px;
+  font-size: 1.1rem;
   font-weight: 600;
+  margin-bottom: 16px;
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .tracks-list {
-  display: flex;
-  flex-direction: column;
+  background: var(--surface-color);
   border: 1px solid var(--border-color);
   border-radius: 16px;
   overflow: hidden;
-  background: var(--surface-color);
 }
 
 .track-row {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 20px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--border-color);
-  transition: all 0.2s ease;
+  transition: background 0.2s;
 }
 
 .track-row:last-child {
@@ -975,22 +1039,6 @@ onMounted(() => {
   background: var(--surface-hover);
 }
 
-.track-row.featured {
-  border-left: 3px solid var(--info-color, #3b82f6);
-}
-
-.track-row.remix {
-  border-left: 3px solid var(--warning-color, #f59e0b);
-}
-
-.track-number {
-  width: 28px;
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
 .track-play {
   width: 36px;
   height: 36px;
@@ -998,246 +1046,37 @@ onMounted(() => {
   border: none;
   background: var(--primary-color);
   color: white;
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
-}
-
-.track-play:hover {
-  transform: scale(1.1);
-  box-shadow: 0 4px 12px var(--primary-glow, rgba(139, 92, 246, 0.3));
+  cursor: pointer;
 }
 
 .track-info {
   flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
 .track-title {
   font-weight: 500;
-  color: var(--text-color);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.track-artist,
-.track-album {
-  font-size: 13px;
+.track-album, .track-artist {
+  font-size: 0.85rem;
   color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .track-genre {
+  font-size: 0.85rem;
   color: var(--text-tertiary);
-  font-size: 13px;
-  min-width: 100px;
-  text-align: center;
+  width: 120px;
 }
 
 .track-duration {
+  font-size: 0.85rem;
   color: var(--text-tertiary);
-  font-size: 13px;
   font-family: monospace;
-  min-width: 50px;
-  text-align: right;
-}
-
-/* Buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-small {
-  padding: 6px 12px;
-  font-size: 13px;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
-  color: white;
-  box-shadow: 0 4px 15px var(--accent-muted, rgba(139, 92, 246, 0.2));
-}
-
-.btn-primary:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px var(--accent-muted, rgba(139, 92, 246, 0.3));
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: var(--surface-color);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
-}
-
-.btn-secondary:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-hover);
-}
-
-/* Loading */
-.loading-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.skeleton-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-}
-
-.skeleton-avatar {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: linear-gradient(
-    90deg,
-    var(--surface-muted) 25%,
-    var(--surface-hover) 50%,
-    var(--surface-muted) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-.skeleton-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--surface-muted) 25%,
-    var(--surface-hover) 50%,
-    var(--surface-muted) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: 4px;
-}
-
-.skeleton-name {
-  height: 20px;
-  width: 70%;
-}
-
-.skeleton-meta {
-  height: 16px;
-  width: 50%;
-}
-
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-/* Artists Grid */
-.artists-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.artist-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.artist-card:hover {
-  border-color: var(--primary-color);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.artist-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.artist-info h3 {
-  margin: 0 0 6px 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-color);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.artist-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-}
-
-.genre-badge {
-  padding: 3px 10px;
-  background: var(--accent-muted, rgba(139, 92, 246, 0.15));
-  color: var(--primary-color);
-  border-radius: 12px;
-  font-weight: 500;
-  font-size: 12px;
-}
-
-.no-genre-badge {
-  padding: 3px 10px;
-  background: var(--surface-muted);
-  color: var(--text-tertiary);
-  border-radius: 12px;
-  font-size: 12px;
-}
-
-.track-count {
-  color: var(--text-tertiary);
-}
-
-.view-icon {
-  color: var(--text-tertiary);
-  transition: all 0.2s ease;
-}
-
-.artist-card:hover .view-icon {
-  color: var(--primary-color);
-  transform: translateX(4px);
 }
 
 /* Modal */
@@ -1254,159 +1093,56 @@ onMounted(() => {
 }
 
 .modal {
-  background: var(--background-elevated, var(--surface-color));
+  background: var(--surface-color);
   border: 1px solid var(--border-color);
   border-radius: 20px;
   width: 100%;
-  max-width: 440px;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  max-width: 480px;
   overflow: hidden;
 }
 
 .modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--surface-muted);
-}
-
-.modal-header h3 {
-  margin: 0;
-  font-size: 1.125rem;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  transition: all 0.2s ease;
-}
-
-.modal-close:hover {
-  color: var(--text-color);
-  background: var(--surface-hover);
 }
 
 .modal-body {
   padding: 24px;
 }
 
-.modal-description {
-  margin: 0 0 20px 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.merge-note {
-  color: var(--text-tertiary);
-  font-size: 13px;
-}
-
 .modal-footer {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
   padding: 16px 24px;
   border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
   background: var(--surface-muted);
 }
 
 .form-group {
-  margin-bottom: 0;
+  margin-top: 16px;
 }
 
 .form-group label {
   display: block;
   margin-bottom: 8px;
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-weight: 500;
 }
 
-.genre-input-wrapper input {
+.form-group input {
   width: 100%;
-  padding: 12px 14px;
-  background: var(--surface-color);
+  padding: 10px 14px;
+  border-radius: 8px;
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  background: var(--background-page);
   color: var(--text-color);
-  font-family: inherit;
-  font-size: 14px;
-  transition: all 0.2s ease;
-}
-
-.genre-input-wrapper input:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--accent-muted, rgba(139, 92, 246, 0.15));
-}
-
-/* Modal animation */
-.modal-enter-active,
-.modal-leave-active {
-  transition: all 0.3s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-from .modal,
-.modal-leave-to .modal {
-  transform: scale(0.95) translateY(20px);
-}
-
-/* Empty State */
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-  border: 2px dashed var(--border-color);
-  border-radius: 20px;
-  background: var(--surface-muted);
-}
-
-.empty-state svg {
-  color: var(--text-tertiary);
-  margin-bottom: 16px;
-}
-
-.empty-state h3 {
-  margin: 0 0 8px 0;
-  font-size: 1.25rem;
-  color: var(--text-color);
-}
-
-.empty-state p {
-  margin: 0 0 24px 0;
-  color: var(--text-secondary);
-}
-
-/* Spinning animation for refresh icon */
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.spinning {
-  animation: spin 1s linear infinite;
 }
 
 /* Responsive */
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .header {
     flex-direction: column;
     align-items: stretch;
@@ -1414,7 +1150,6 @@ onMounted(() => {
 
   .header-actions {
     flex-direction: column;
-    gap: 10px;
   }
 
   .search-box {
@@ -1422,40 +1157,49 @@ onMounted(() => {
     width: 100%;
   }
 
-  .sort-controls {
-    width: 100%;
-  }
-
-  .sort-select {
-    width: 100%;
-  }
-
   .artists-grid {
     grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .artist-card {
+    padding: 12px;
   }
 
   .detail-title-section {
     flex-direction: column;
-    align-items: center;
     text-align: center;
+    gap: 16px;
   }
 
-  .detail-meta {
-    flex-wrap: wrap;
+  .artist-name-row {
     justify-content: center;
   }
 
+  .artist-name-row h2 {
+    font-size: 1.5rem;
+  }
+
+  .detail-meta {
+    flex-direction: column;
+    gap: 8px;
+  }
+
   .track-row {
-    flex-wrap: wrap;
+    padding: 10px 12px;
     gap: 12px;
   }
 
-  .track-number {
+  .track-number, .track-genre {
     display: none;
   }
 
-  .track-genre {
-    display: none;
+  .modal {
+    max-width: 100%;
+    margin: 0;
+    border-radius: 20px 20px 0 0;
+    position: fixed;
+    bottom: 0;
   }
 }
 </style>

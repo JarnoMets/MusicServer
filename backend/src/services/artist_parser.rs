@@ -3,7 +3,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashSet;
 
-// Patterns for splitting artist names
 static ARTIST_SEPARATORS: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\s*(?:&|,|\s+and\s+|\s+vs\.?\s+|\s+x\s+)\s*").unwrap()
 });
@@ -14,6 +13,7 @@ static FEAT_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 // Pattern for remixes - extract remixer name
+#[allow(dead_code)]
 static REMIX_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(?:\(|\[)?\s*([^()\[\]]+?)\s+(?:remix|rmx|bootleg|edit|rework|flip|vip)\s*(?:\)|\])?").unwrap()
 });
@@ -73,6 +73,7 @@ fn normalize_artist_name(name: &str) -> String {
 }
 
 /// Split a potentially compound artist string into individual artists
+#[allow(dead_code)]
 fn split_artists(artist_str: &str) -> Vec<String> {
     ARTIST_SEPARATORS
         .split(artist_str)
@@ -85,53 +86,33 @@ fn split_artists(artist_str: &str) -> Vec<String> {
 pub fn parse_artists(artist: Option<&str>, title: Option<&str>) -> ParsedArtists {
     let mut result = ParsedArtists::new();
     
-    // Parse primary artists from artist field
+    // Parse artist field first
     if let Some(artist_str) = artist {
-        // First, try to extract featured artists that might be in the artist field itself
-        // e.g., "Artist 1 feat. Artist 2"
-        let artist_str = extract_featured_from_string(artist_str, &mut result.featured);
+        // Extract featured artists from string
+        let mut featured_vec = Vec::new();
+        let remaining = extract_featured_from_string(artist_str, &mut featured_vec);
+        
+        for feat in featured_vec {
+             result.featured.push(feat);
+        }
         
         // Split remaining by separators
-        result.primary = split_artists(&artist_str);
+        for artist in ARTIST_SEPARATORS.split(&remaining) {
+            let cleaned = clean_artist(artist);
+            if !cleaned.is_empty() {
+                result.primary.push(cleaned);
+            }
+        }
     }
     
     // Parse title for additional artist info
     if let Some(title_str) = title {
-        // Extract featured artists from title
-        for cap in FEAT_PATTERN.captures_iter(title_str) {
-            if let Some(feat_match) = cap.get(1) {
-                let featured_str = feat_match.as_str();
-                // The featured section might have multiple artists too
-                for artist in split_artists(featured_str) {
-                    if !result.featured.contains(&artist) && !result.primary.contains(&artist) {
-                        result.featured.push(artist);
-                    }
-                }
-            }
-        }
+        let mut featured_vec = Vec::new();
+        extract_featured_from_string(title_str, &mut featured_vec);
         
-        // Extract remixers from title
-        for cap in REMIX_PATTERN.captures_iter(title_str) {
-            if let Some(remix_match) = cap.get(1) {
-                let remixer = remix_match.as_str().trim().to_string();
-                // Skip if it's the same as a primary artist (self-remix)
-                if !remixer.is_empty() 
-                    && !result.remixers.contains(&remixer) 
-                    && !looks_like_version(&remixer)  // Skip things like "Radio", "Extended", "Original"
-                {
-                    result.remixers.push(remixer);
-                }
-            }
-        }
-        
-        // Extract producers
-        for cap in PROD_PATTERN.captures_iter(title_str) {
-            if let Some(prod_match) = cap.get(1) {
-                for artist in split_artists(prod_match.as_str()) {
-                    if !result.producers.contains(&artist) {
-                        result.producers.push(artist);
-                    }
-                }
+        for feat in featured_vec {
+            if !result.featured.contains(&feat) && !result.primary.contains(&feat) {
+                 result.featured.push(feat);
             }
         }
     }
@@ -143,12 +124,18 @@ pub fn parse_artists(artist: Option<&str>, title: Option<&str>) -> ParsedArtists
 fn extract_featured_from_string(s: &str, featured: &mut Vec<String>) -> String {
     let mut result = s.to_string();
     
+    // Use captures_iter to find all matches
     for cap in FEAT_PATTERN.captures_iter(s) {
         if let Some(feat_match) = cap.get(1) {
-            for artist in split_artists(feat_match.as_str()) {
-                if !featured.contains(&artist) {
-                    featured.push(artist);
-                }
+            // Processing featured artists string
+            let feat_str = feat_match.as_str();
+            
+            // Recursively split featured artists too
+            for artist in ARTIST_SEPARATORS.split(feat_str) {
+                 let cleaned = clean_artist(artist);
+                 if !featured.contains(&cleaned) && !cleaned.is_empty() {
+                     featured.push(cleaned);
+                 }
             }
         }
         // Remove the matched portion from result
@@ -161,6 +148,7 @@ fn extract_featured_from_string(s: &str, featured: &mut Vec<String>) -> String {
 }
 
 /// Check if a string looks like a version descriptor rather than an artist name
+#[allow(dead_code)]
 fn looks_like_version(s: &str) -> bool {
     let lower = s.to_lowercase();
     let version_words = [
@@ -175,21 +163,80 @@ fn looks_like_version(s: &str) -> bool {
 /// Clean a title by removing artist information that's embedded in it
 /// This removes feat., remix attribution, etc. to get a cleaner title
 pub fn clean_title(title: &str) -> String {
-    let mut result = title.to_string();
+    let mut cleaned = title.to_string();
     
     // Remove feat. sections
-    result = FEAT_PATTERN.replace_all(&result, "").to_string();
+    cleaned = FEAT_PATTERN.replace_all(&cleaned, "").to_string();
     
     // Remove prod. by sections  
-    result = PROD_PATTERN.replace_all(&result, "").to_string();
+    cleaned = PROD_PATTERN.replace_all(&cleaned, "").to_string();
     
     // Clean up any leftover empty parentheses or brackets
-    result = result.replace("()", "").replace("[]", "");
+    cleaned = cleaned.replace("()", "").replace("[]", "");
     
     // Clean up multiple spaces
-    result = result.split_whitespace().collect::<Vec<_>>().join(" ");
+    cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     
-    result.trim().to_string()
+    cleaned.trim().to_string()
+}
+
+pub fn clean_artist(artist: &str) -> String {
+    let mut cleaned = artist.to_string();
+    
+    // Remove common suffixes like " - Topic"
+    if cleaned.ends_with(" - Topic") {
+        cleaned = cleaned.replace(" - Topic", "");
+    }
+    
+    // Remove "VEVO"
+    if cleaned.ends_with("VEVO") {
+        cleaned = cleaned.replace("VEVO", "");
+    }
+    
+    cleaned.trim().to_string()
+}
+
+/// Parse artist string into canonical artist name and list of featured artists
+#[allow(dead_code)]
+pub fn parse_artist_string(artist_str: &str) -> (String, Vec<String>) {
+    let mut primary_artists = Vec::new();
+    let mut featured_artists = Vec::new();
+    
+    // Split on separators (feat., vs., &, etc)
+    let artists: Vec<&str> = ARTIST_SEPARATORS.split(artist_str).collect();
+    
+    // The first part is the primary artist
+    if !artists.is_empty() {
+        let first = artists[0].trim();
+        if !first.is_empty() {
+             primary_artists.push(clean_artist(first));
+        }
+    }
+    
+    // Other parts might contain featured artists or other primary artists
+    for artist in artists.iter().skip(1) {
+        let trimmed = artist.trim();
+        if trimmed.is_empty() { continue; }
+
+        let mut featured_vec = Vec::new();
+        // Extract featured artists using the feat. pattern
+        let remaining = extract_featured_from_string(trimmed, &mut featured_vec);
+        
+        // Add extracted featured artists
+        for feat in featured_vec {
+             featured_artists.push(feat);
+        }
+        
+        // If anything remains after extracting feat., it's another primary artist
+        if !remaining.trim().is_empty() {
+             // Check if it's "Remix" or similar non-artist string
+             if !REMIX_PATTERN.is_match(&remaining) {
+                 primary_artists.push(clean_artist(&remaining));
+             }
+        }
+    }
+    
+    (primary_artists.join(" & "), featured_artists)
 }
 
 #[cfg(test)]

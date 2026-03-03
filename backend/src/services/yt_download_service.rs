@@ -26,6 +26,7 @@ pub struct CreateYoutubeDownload {
 }
 
 /// Extract video ID from YouTube URL
+#[allow(dead_code)]
 pub fn extract_video_id(url: &str) -> Option<String> {
     // Handle youtube.com/watch?v=ID format
     if let Some(pos) = url.find("v=") {
@@ -103,6 +104,7 @@ pub async fn get_all_downloads(pool: &PgPool) -> Result<Vec<YoutubeDownload>, sq
 }
 
 /// Get downloaded video by video ID
+#[allow(dead_code)]
 pub async fn get_download_by_video_id(
     pool: &PgPool,
     video_id: &str,

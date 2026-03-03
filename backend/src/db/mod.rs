@@ -3,6 +3,8 @@ mod schema;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres};
 use url::Url;
+use uuid::Uuid;
+use crate::models::user::User;
 
 #[derive(Clone)]
 pub struct Database {
@@ -69,8 +71,8 @@ impl Database {
 
         // Now connect to the actual database with optimized pool settings
         let pool = PgPoolOptions::new()
-            .min_connections(1)           // Keep at least 1 connection ready
-            .max_connections(10)          // Allow up to 10 connections under load
+            .min_connections(2)           // Keep a couple connections ready
+            .max_connections(20)          // Increased from 10 to prevent starvation during heavy IO/sync
             .idle_timeout(std::time::Duration::from_secs(300))  // Close idle connections after 5 min
             .max_lifetime(std::time::Duration::from_secs(1800)) // Recycle connections after 30 min
             .acquire_timeout(std::time::Duration::from_secs(30)) // Fail fast on connection issues
@@ -96,5 +98,94 @@ impl Database {
         log::info!("Database setup completed successfully");
 
         Ok(Database { pool })
+    }
+
+    // --- User Related Methods ---
+
+    pub async fn get_user_by_id(&self, id: &Uuid) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            "SELECT id, email, name, google_id, avatar_url, is_admin, created_at, updated_at FROM users WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn get_user_by_email(&self, email: &str) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            "SELECT id, email, name, google_id, avatar_url, is_admin, created_at, updated_at FROM users WHERE email = $1"
+        )
+        .bind(email)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    pub async fn upsert_google_user(
+        &self,
+        email: &str,
+        google_id: &str,
+        name: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<User, sqlx::Error> {
+        // First try to find by google_id
+        let existing_user: Option<User> = sqlx::query_as::<_, User>(
+            "SELECT id, email, name, google_id, avatar_url, is_admin, created_at, updated_at FROM users WHERE google_id = $1"
+        )
+        .bind(google_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(user) = existing_user {
+            // Update existing user's info
+            return sqlx::query_as::<_, User>(
+                "UPDATE users SET email = $1, name = $2, avatar_url = $3, updated_at = NOW() WHERE id = $4 RETURNING id, email, name, google_id, avatar_url, is_admin, created_at, updated_at"
+            )
+            .bind(email)
+            .bind(name)
+            .bind(avatar_url)
+            .bind(user.id)
+            .fetch_one(&self.pool)
+            .await;
+        }
+
+        // Then try to find by email
+        let existing_email_user: Option<User> = sqlx::query_as::<_, User>(
+            "SELECT id, email, name, google_id, avatar_url, is_admin, created_at, updated_at FROM users WHERE email = $1"
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(user) = existing_email_user {
+            // Update existing user with google_id
+            return sqlx::query_as::<_, User>(
+                "UPDATE users SET google_id = $1, name = $2, avatar_url = $3, updated_at = NOW() WHERE id = $4 RETURNING id, email, name, google_id, avatar_url, is_admin, created_at, updated_at"
+            )
+            .bind(google_id)
+            .bind(name)
+            .bind(avatar_url)
+            .bind(user.id)
+            .fetch_one(&self.pool)
+            .await;
+        }
+
+        // Create new user (first user is admin)
+        let count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+            .fetch_one(&self.pool)
+            .await?;
+        
+        let is_admin = count == 0;
+
+        sqlx::query_as::<_, User>(
+            "INSERT INTO users (email, google_id, name, avatar_url, is_admin) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, name, google_id, avatar_url, is_admin, created_at, updated_at"
+        )
+        .bind(email)
+        .bind(google_id)
+        .bind(name)
+        .bind(avatar_url)
+        .bind(is_admin)
+        .fetch_one(&self.pool)
+        .await
     }
 }

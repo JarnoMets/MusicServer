@@ -3,12 +3,80 @@ import { getAPIBaseURL } from '../utils/api'
 
 const API_BASE_URL = getAPIBaseURL()
 
+/**
+ * Mirror the currently-playing track to DJ Deck 1.
+ *
+ * This runs lazily (next tick) so it doesn't block the regular player from
+ * starting.  It only mirrors *local* tracks (not internet streams) because
+ * streams don't have an ID the deck system can load.
+ *
+ * The DJ audio engine is a singleton — its state survives route changes, so
+ * the track stays loaded in Deck 1 even when the user navigates to /decks.
+ * Deck 1 is loaded in a *paused/cued* state so it doesn't produce any sound
+ * until the user explicitly hits play on the deck.
+ */
+let mirrorQueued = false
+const mirrorToDeck1 = () => {
+  if (mirrorQueued) return
+  mirrorQueued = true
+  // Use setTimeout(0) so the import is lazy and doesn't create circular deps
+  // at module-init time.
+  setTimeout(async () => {
+    mirrorQueued = false
+    const src = state.currentSource
+    if (!src || src.type !== 'local') return
+
+    try {
+      // Dynamic imports to avoid circular dependency at module level
+      const { useDjStore } = await import('../stores/djStore')
+      const { useDjAudioEngine } = await import('./useDjAudioEngine')
+      const store = useDjStore()
+      const engine = useDjAudioEngine()
+
+      // Don't mirror if deck 1 already has this exact track loaded
+      const deck1 = store.getDeck(1)
+      if (deck1.track?.id === src.id) return
+
+      // Initialise the audio engine if it hasn't been yet (requires a prior
+      // user-gesture — if init fails we silently skip mirroring).
+      if (!engine.isInitialized.value) {
+        try { await engine.init() } catch { return }
+      }
+
+      // Build a MusicFile-like object from the player source
+      const mirrorTrack = {
+        id: src.id,
+        title: src.title,
+        artist: src.artist ?? null,
+        bpm: src.bpm ?? null,
+        initial_key: src.initial_key ?? null,
+        duration: src.duration ?? null,
+        file_path: '',
+        created_at: '',
+        updated_at: '',
+      }
+
+      // Load into deck 1 but keep it paused (cued)
+      await engine.loadTrackToDeck(1, mirrorTrack as any)
+      // The engine auto-plays on sync — force pause so deck 1 just mirrors
+      engine.pause(1)
+      store.setPlayState(1, 'cued')
+    } catch (e) {
+      // Non-critical — if mirroring fails the regular player still works fine
+      console.warn('[Mirror] Failed to mirror track to Deck 1:', e)
+    }
+  }, 0)
+}
+
 type PlayerSource =
   | {
       type: 'local'
       id: string
       title: string
       artist?: string | null
+      bpm?: number | null
+      initial_key?: string | null
+      duration?: number | null
     }
   | {
       type: 'stream'
@@ -21,6 +89,9 @@ interface TrackInfo {
   id: string
   title: string
   artist?: string | null
+  bpm?: number | null
+  initial_key?: string | null
+  duration?: number | null
 }
 
 interface PlayerState {
@@ -50,16 +121,40 @@ const state = reactive<PlayerState>({
 })
 
 const buildStreamUrl = (musicId: string) => {
-  return `${API_BASE_URL}/music/${musicId}/stream`
+  const base = `${API_BASE_URL}/music/${musicId}/stream`
+  try {
+    // Read token from localStorage (same key used by the auth store). We append
+    // it as a `token` query param because audio elements cannot set custom
+    // Authorization headers.
+    const token = localStorage.getItem('music_auth_token')
+    if (token) {
+      // Preserve existing query params if any
+      return `${base}?token=${encodeURIComponent(token)}`
+    }
+  } catch (e) {
+    // localStorage may be unavailable in some contexts; fall back to base URL
+    console.warn('Could not read auth token from localStorage for stream URL', e)
+  }
+  return base
 }
 
-const playLocalTrack = (params: { id: string; title: string; artist?: string | null }) => {
+const playLocalTrack = (params: { 
+  id: string; 
+  title: string; 
+  artist?: string | null;
+  bpm?: number | null;
+  initial_key?: string | null;
+  duration?: number | null;
+}) => {
   // Add to history if we have a current track
   if (state.currentSource?.type === 'local') {
     const currentTrack: TrackInfo = {
       id: state.currentSource.id,
       title: state.currentSource.title,
       artist: state.currentSource.artist,
+      bpm: state.currentSource.bpm,
+      initial_key: state.currentSource.initial_key,
+      duration: state.currentSource.duration,
     }
     // Only add if different from last history item
     if (state.history.length === 0 || state.history[state.history.length - 1].id !== currentTrack.id) {
@@ -76,6 +171,9 @@ const playLocalTrack = (params: { id: string; title: string; artist?: string | n
     id: params.id,
     title: params.title,
     artist: params.artist,
+    bpm: params.bpm,
+    initial_key: params.initial_key,
+    duration: params.duration,
   }
   state.audioUrl = buildStreamUrl(params.id)
   state.updatedAt = Date.now()
@@ -86,6 +184,9 @@ const playLocalTrack = (params: { id: string; title: string; artist?: string | n
   if (idx !== -1) {
     state.currentIndex = idx
   }
+
+  // Mirror to DJ Deck 1 so the user can seamlessly transition to decks
+  mirrorToDeck1()
 }
 
 const playInternetStream = (params: { title: string; url: string; genre?: string }) => {
@@ -151,6 +252,9 @@ const playPreviousTrack = () => {
         id: state.currentSource.id,
         title: state.currentSource.title,
         artist: state.currentSource.artist,
+        bpm: state.currentSource.bpm,
+        initial_key: state.currentSource.initial_key,
+        duration: state.currentSource.duration,
       }
       // Insert at current position
       if (state.currentIndex >= 0) {
@@ -163,6 +267,9 @@ const playPreviousTrack = () => {
       id: prevTrack.id,
       title: prevTrack.title,
       artist: prevTrack.artist,
+      bpm: prevTrack.bpm,
+      initial_key: prevTrack.initial_key,
+      duration: prevTrack.duration,
     }
     state.audioUrl = buildStreamUrl(prevTrack.id)
     state.updatedAt = Date.now()
@@ -171,6 +278,9 @@ const playPreviousTrack = () => {
     // Update index
     const idx = state.queue.findIndex(t => t.id === prevTrack.id)
     state.currentIndex = idx
+
+    // Mirror to DJ Deck 1
+    mirrorToDeck1()
   }
 }
 
@@ -185,6 +295,9 @@ const playNextTrack = () => {
         id: state.currentSource.id,
         title: state.currentSource.title,
         artist: state.currentSource.artist,
+        bpm: state.currentSource.bpm,
+        initial_key: state.currentSource.initial_key,
+        duration: state.currentSource.duration,
       }
       if (state.history.length === 0 || state.history[state.history.length - 1].id !== currentTrack.id) {
         state.history.push(currentTrack)
@@ -200,10 +313,16 @@ const playNextTrack = () => {
       id: nextTrack.id,
       title: nextTrack.title,
       artist: nextTrack.artist,
+      bpm: nextTrack.bpm,
+      initial_key: nextTrack.initial_key,
+      duration: nextTrack.duration,
     }
     state.audioUrl = buildStreamUrl(nextTrack.id)
     state.updatedAt = Date.now()
     state.isPlaying = true
+
+    // Mirror to DJ Deck 1
+    mirrorToDeck1()
   } else if (state.repeat === 'all' && state.queue.length > 0) {
     // Loop back to beginning when repeat is enabled
     state.currentIndex = 0
@@ -213,10 +332,16 @@ const playNextTrack = () => {
       id: nextTrack.id,
       title: nextTrack.title,
       artist: nextTrack.artist,
+      bpm: nextTrack.bpm,
+      initial_key: nextTrack.initial_key,
+      duration: nextTrack.duration,
     }
     state.audioUrl = buildStreamUrl(nextTrack.id)
     state.updatedAt = Date.now()
     state.isPlaying = true
+
+    // Mirror to DJ Deck 1
+    mirrorToDeck1()
   }
 }
 
@@ -237,6 +362,8 @@ const cycleRepeat = () => {
 export const usePlayer = () => {
   return {
     state: readonly(state),
+    /** Mutable state — only for internal GlobalPlayer sync. Do NOT use elsewhere. */
+    _mutableState: state,
     playLocalTrack,
     playInternetStream,
     stopPlayback,

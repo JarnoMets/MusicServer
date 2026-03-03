@@ -1,36 +1,52 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 :root {
-  /* Brand Colors - These are overridden by theme system */
-  --primary-color: #8b5cf6;
-  --primary-hover: #a78bfa;
-  --primary-dark: #6d28d9;
-  --primary-light: #c4b5fd;
-  --accent-color: #22d3ee;
-  --accent-dark: #0ea5e9;
-  --accent-muted: rgba(34, 211, 238, 0.15);
+  /* Spotify-inspired Brand Colors */
+  --spotify-green: #1ed760;
+  --spotify-green-hover: #1fdf64;
+  --spotify-black: #121212;
+  --spotify-dark-grey: #181818;
+  --spotify-grey: #282828;
+  --spotify-light-grey: #b3b3b3;
+  --spotify-white: #ffffff;
+
+  /* Brand Colors - Standardized */
+  --primary-color: var(--spotify-green);
+  --primary-hover: var(--spotify-green-hover);
+  --primary-dark: #169c46;
+  --primary-glow: rgba(30, 215, 96, 0.15);
+  --accent-color: #1ed760;
 
   /* Background Layers */
-  --background-color: #04050c;
-  --background-elevated: #0f172a;
-  --surface-color: #152139;
-  --surface-hover: #1f2d4a;
-  --surface-muted: rgba(255, 255, 255, 0.04);
+  --background-color: #000000;
+  --background-base: #121212;
+  --background-highlight: #1a1a1a;
+  --background-press: #000000;
+  --background-elevated: #1a1a1a;
+  --surface-color: #121212;
+  --surface-elevated: #242424;
+  --surface-hover: #2a2a2a;
+  --surface-muted: #181818;
 
-  /* Border Colors */
-  --border-color: rgba(148, 163, 184, 0.2);
-  --border-hover: rgba(148, 163, 184, 0.4);
+  /* Borders */
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-hover: rgba(255, 255, 255, 0.2);
 
   /* Text */
-  --text-color: #f8fafc;
-  --text-secondary: #cbd5f5;
-  --text-tertiary: #94a3b8;
+  --text-color: #ffffff;
+  --text-secondary: #b3b3b3;
+  --text-tertiary: #a7a7a7;
+  --text-bright: #ffffff;
 
   /* Status */
   --success-color: #06d6a0;
   --warning-color: #fbbf24;
   --error-color: #f87171;
   --info-color: #38bdf8;
+
+  /* Extended palette */
+  --primary-light: #4ade80;
+  --accent-muted: rgba(30, 215, 96, 0.15);
 
   /* Theme gradients - overridden by theme system */
   --header-gradient: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.85));
@@ -58,7 +74,13 @@
   --transition-base: 220ms ease;
   --transition-slow: 420ms ease;
 
-  /* Spacing */
+  /* Responsive Breakpoints */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+
+  /* Space variables */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
@@ -67,6 +89,26 @@
   --space-2xl: 48px;
 }
 
+/* ... existing code ... */
+
+/* Hide/Show utilities */
+.hide-sm {
+  @media (max-width: 640px) { display: none !important; }
+}
+
+.hide-md {
+  @media (max-width: 768px) { display: none !important; }
+}
+
+.show-sm-only {
+  @media (min-width: 641px) { display: none !important; }
+}
+
+@media (max-width: 768px) {
+  .hide-sm-mobile { display: none !important; }
+}
+
+/* Base resets */
 * {
   margin: 0;
   padding: 0;
@@ -386,6 +428,58 @@ a:focus-visible {
   h1 { font-size: 2rem; }
   h2 { font-size: 1.75rem; }
   h3 { font-size: 1.25rem; }
+}
+
+/* Make tab-content neutral by default — remove colored/blueish container around tab panes
+   Many components previously added their own backgrounds; this global rule keeps tab panes
+   visually consistent with the app surface. Use more specific selectors in components if
+   a background is intentionally required. */
+.tab-content {
+  /* Use the elevated surface so tab panes have consistent contrast without the
+     bright/blue gradient some components used. Keep spacing so layout doesn't
+     suddenly shift. Components can override locally when they need a different
+     background. */
+  background: var(--surface-elevated);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+  padding: 16px;
+  border-radius: var(--radius-md);
+}
+
+/* Make inputs and selects inside tabs slightly lighter and clearly visible */
+.tab-content input,
+.tab-content select,
+.tab-content textarea,
+.tab-content .search-input {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-color);
+}
+
+/* Consistent filter panels across tabs */
+.tab-content .filters-panel,
+.tab-content .filter-row,
+.filters-panel {
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tab-content .search-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.tab-content .search-bar input {
+  flex: 1 1 220px;
 }
 
 /* Light theme adjustments */

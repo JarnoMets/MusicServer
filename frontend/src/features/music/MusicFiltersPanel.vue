@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { MusicFilters } from '../../types/MusicTab'
+import type { MusicFilters } from '../../types'
 import Icon from '../../shared/components/Icons.vue'
 
 interface Props {
@@ -21,13 +21,6 @@ const emit = defineEmits<{
   reset: []
 }>()
 
-const sortOptions = [
-  { value: 'title', label: 'Title' },
-  { value: 'artist', label: 'Artist' },
-  { value: 'album', label: 'Album' },
-  { value: 'created_at', label: 'Date Added' },
-  { value: 'updated_at', label: 'Last Updated' },
-]
 const pageSizeOptions = [25, 50, 100, 250]
 </script>
 
@@ -75,43 +68,6 @@ const pageSizeOptions = [25, 50, 100, 250]
       </select>
     </div>
 
-    <div class="filter-group">
-      <label for="sort-filter">
-        <Icon name="filter" :size="14" />
-        Sort By
-      </label>
-      <select
-        id="sort-filter"
-        :value="filters.sort"
-        @change="emit('update:sort', ($event.target as HTMLSelectElement).value as any)"
-        class="select-input"
-      >
-        <option v-for="option in sortOptions" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
-    </div>
-
-    <div class="filter-group small">
-      <label for="order-filter">Order</label>
-      <div class="order-buttons">
-        <button
-          :class="['order-btn', { active: filters.order === 'asc' }]"
-          @click="emit('update:order', 'asc')"
-          title="Ascending"
-        >
-          ↑ ASC
-        </button>
-        <button
-          :class="['order-btn', { active: filters.order === 'desc' }]"
-          @click="emit('update:order', 'desc')"
-          title="Descending"
-        >
-          ↓ DESC
-        </button>
-      </div>
-    </div>
-
     <div class="filter-group small">
       <label for="page-size">Show</label>
       <select
@@ -126,7 +82,7 @@ const pageSizeOptions = [25, 50, 100, 250]
 
     <div class="filter-actions">
       <button class="reset-btn" @click="emit('reset')" title="Reset all filters">
-        <span>↺</span> Reset
+        <Icon name="refresh-cw" :size="14" /> Reset
       </button>
     </div>
   </section>
@@ -232,43 +188,6 @@ const pageSizeOptions = [25, 50, 100, 250]
   background-position: right 12px center;
 }
 
-.order-buttons {
-  display: flex;
-  gap: 4px;
-}
-
-.order-btn {
-  flex: 1;
-  padding: 10px 12px;
-  background: var(--background-elevated);
-  border: 1px solid var(--border-color);
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--transition-base);
-}
-
-.order-btn:first-child {
-  border-radius: var(--radius-md) 0 0 var(--radius-md);
-}
-
-.order-btn:last-child {
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  border-left: none;
-}
-
-.order-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text-color);
-}
-
-.order-btn.active {
-  background: var(--primary-color);
-  border-color: var(--primary-color);
-  color: white;
-}
-
 .filter-actions {
   display: flex;
   align-items: flex-end;
@@ -310,18 +229,34 @@ const pageSizeOptions = [25, 50, 100, 250]
   }
 
   .filter-group.small {
-    min-width: calc(50% - 6px);
+    min-width: 0;
     flex: 1;
   }
 
   .filter-actions {
     width: 100%;
-    justify-content: center;
+    margin-top: 8px;
   }
 
   .reset-btn {
-    flex: 1;
+    width: 100%;
     justify-content: center;
+    padding: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .filters {
+    padding: 12px;
+    gap: 10px;
+    border-radius: var(--radius-md);
+  }
+
+  .text-input,
+  .select-input,
+  .reset-btn {
+    font-size: 16px; /* Better for mobile touch and prevents zoom on iOS */
+    padding: 12px;
   }
 }
 </style>

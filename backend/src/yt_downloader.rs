@@ -1,10 +1,13 @@
+use crate::db::Database;
+use crate::services::file_sync_service;
 use crate::services::yt_download_service;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::fs;
+use std::fs as std_fs;
 use std::path::PathBuf;
-use std::process::Command;
+use tokio::fs;
+use tokio::process::Command;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
@@ -31,17 +34,41 @@ pub struct DownloadProgress {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DownloadSession {
     pub id: String,
     pub cancelled: Arc<AtomicBool>,
     pub progress: Arc<RwLock<DownloadProgress>>,
     pub progress_tx: broadcast::Sender<DownloadProgress>,
+    pub update_tx: Option<broadcast::Sender<serde_json::Value>>,
 }
 
 pub type DownloadSessions = Arc<RwLock<HashMap<String, DownloadSession>>>;
 
 pub fn create_download_sessions() -> DownloadSessions {
     Arc::new(RwLock::new(HashMap::new()))
+}
+
+/// One-time cleanup of temporary files left from previous server runs.
+pub fn init_cleanup(output_dir: &str) {
+    let output_path = PathBuf::from(output_dir);
+    if !output_path.exists() {
+        return;
+    }
+
+    if let Ok(entries) = std_fs::read_dir(&output_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with(".tmp_") {
+                        log::info!("Startup cleanup: Removing legacy temp directory: {:?}", path);
+                        let _ = std_fs::remove_dir_all(&path);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn cleanup_incomplete_downloads(output_dir: &str) -> Result<(), String> {
@@ -51,9 +78,13 @@ fn cleanup_incomplete_downloads(output_dir: &str) -> Result<(), String> {
     }
 
     // Look for temporary files and unwanted formats that might be left from incomplete downloads
-    if let Ok(entries) = fs::read_dir(&output_path) {
+    if let Ok(entries) = std_fs::read_dir(&output_path) {
         for entry in entries.flatten() {
             let path = entry.path();
+            
+            // Note: We don't clean up .tmp_ dirs here globally anymore to avoid clashing with concurrent sessions.
+            // They are handled by task-level cleanup and init_cleanup at startup.
+
             if let Some(file_name) = path.file_name() {
                 let name = file_name.to_string_lossy();
                 if let Some(extension) = path.extension() {
@@ -69,7 +100,7 @@ fn cleanup_incomplete_downloads(output_dir: &str) -> Result<(), String> {
                         || ext == "mkv"
                     {
                         log::info!("Cleaning up file: {:?}", path);
-                        let _ = fs::remove_file(&path);
+                        let _ = std_fs::remove_file(&path);
                     }
                 }
             }
@@ -95,6 +126,7 @@ pub async fn download_youtube_playlist(
     options: Option<DownloadOptions>,
     sessions: DownloadSessions,
     pool: PgPool,
+    update_tx: Option<broadcast::Sender<serde_json::Value>>,
 ) -> Result<String, String> {
     // Create a unique session ID for this download
     let session_id = Uuid::new_v4().to_string();
@@ -116,6 +148,7 @@ pub async fn download_youtube_playlist(
         cancelled: cancelled.clone(),
         progress: progress.clone(),
         progress_tx: progress_tx.clone(),
+        update_tx: update_tx.clone(),
     };
 
     // Store the session
@@ -134,7 +167,7 @@ pub async fn download_youtube_playlist(
     });
 
     // Create output directory if it doesn't exist
-    fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create directory: {}", e))?;
+    fs::create_dir_all(&output_path).await.map_err(|e| format!("Failed to create directory: {}", e))?;
 
     // Send initial progress
     send_progress(
@@ -165,16 +198,19 @@ pub async fn download_youtube_playlist(
     };
 
     // First, get the playlist info to count total videos
-    let mut info_cmd = Command::new("yt-dlp");
+    let mut info_cmd = Command::new("nice");
     info_cmd
+        .arg("-n")
+        .arg("10")
+        .arg("yt-dlp")
         .arg("--flat-playlist")
         .arg("--print")
-        .arg("%(id)s|%(title)s")
+        .arg("%(id)s|%(title)s|%(uploader)s")
         .arg("--playlist-items")
         .arg(&playlist_items)
         .arg(&url);
 
-    let info_output = info_cmd.output().map_err(|e| {
+    let info_output = info_cmd.output().await.map_err(|e| {
         format!(
             "Failed to get playlist info: {}. Make sure yt-dlp is installed.",
             e
@@ -189,14 +225,15 @@ pub async fn download_youtube_playlist(
     }
 
     let playlist_info = String::from_utf8_lossy(&info_output.stdout);
-    let videos: Vec<(String, String)> = playlist_info
+    let videos: Vec<(String, String, String)> = playlist_info
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
             let parts: Vec<&str> = line.split('|').collect();
-            let video_id = parts.get(0).unwrap_or(&"").to_string();
+            let video_id = parts.first().unwrap_or(&"").to_string();
             let title = parts.get(1).unwrap_or(&"Unknown Title").to_string();
-            (video_id, title)
+            let uploader = parts.get(2).unwrap_or(&"Unknown Uploader").to_string();
+            (video_id, title, uploader)
         })
         .collect();
 
@@ -208,16 +245,16 @@ pub async fn download_youtube_playlist(
 
     // Filter out already downloaded videos
     let mut skipped_count = 0;
-    let filtered_videos: Vec<(String, String)> = {
+    let filtered_videos: Vec<(String, String, String)> = {
         let mut filtered = Vec::new();
-        for (video_id, title) in videos {
+        for (video_id, title, uploader) in videos {
             match yt_download_service::is_video_downloaded(&pool, &video_id).await {
                 Ok(true) => {
                     log::info!("Skipping already downloaded video: {}", title);
                     skipped_count += 1;
                 }
                 _ => {
-                    filtered.push((video_id, title));
+                    filtered.push((video_id, title, uploader));
                 }
             }
         }
@@ -271,7 +308,7 @@ pub async fn download_youtube_playlist(
     // Create download tasks
     let mut handles = Vec::new();
 
-    for (video_id, title) in filtered_videos.into_iter() {
+    for (video_id, title, uploader) in filtered_videos.into_iter() {
         // Check for cancellation before each task
         if cancelled.load(Ordering::Relaxed) {
             break;
@@ -293,6 +330,7 @@ pub async fn download_youtube_playlist(
         };
         let cancelled = cancelled.clone();
         let pool = pool.clone();
+        let uploader = uploader.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = semaphore.acquire().await.unwrap();
@@ -302,9 +340,31 @@ pub async fn download_youtube_playlist(
                 return false;
             }
 
-            // Download individual video
-            let mut download_cmd = Command::new("yt-dlp");
+            // Create a unique temp directory for this specific video download
+            let task_id = Uuid::new_v4().to_string();
+            let task_temp_dir = format!("{}/.tmp_{}", output_dir, task_id);
+            if let Err(e) = fs::create_dir_all(&task_temp_dir).await {
+                log::error!("Failed to create task temp dir {}: {}", task_temp_dir, e);
+                failed_count.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+
+            // If the title already contains a dash, we assume it's in "Artist - Track" format.
+            // In that case, we use the title as the filename directly.
+            // Otherwise, we prepend the uploader.
+            let has_dash = title.contains(" - ");
+            let output_template = if has_dash {
+                "%(title)s.%(ext)s"
+            } else {
+                "%(uploader)s - %(title)s.%(ext)s"
+            };
+
+            // Download individual video into the temp directory
+            let mut download_cmd = Command::new("nice");
             download_cmd
+                .arg("-n")
+                .arg("12") // Even lower priority for actual downloads/transcoding
+                .arg("yt-dlp")
                 .arg("-x")
                 .arg("--audio-format")
                 .arg("mp3")
@@ -312,13 +372,13 @@ pub async fn download_youtube_playlist(
                 .arg(&audio_quality)
                 .arg("--no-playlist")
                 .arg("--output")
-                .arg(format!("{}/%(uploader)s - %(title)s.%(ext)s", output_dir))
+                .arg(format!("{}/{}", task_temp_dir, output_template))
                 .arg("--embed-metadata")
                 .arg("--add-metadata")
                 .arg("--parse-metadata")
-                .arg("%(uploader)s:%(artist)s")
+                .arg("%(uploader)s:%(artist)s") // Fallback: use uploader as artist
                 .arg("--parse-metadata")
-                .arg("%(title)s:%(track)s")
+                .arg("%(title)s:%(artist)s - %(track)s") // If title has dash, overwrite artist/track
                 .arg("--concurrent-fragments")
                 .arg("4")
                 .arg("--retries")
@@ -329,63 +389,138 @@ pub async fn download_youtube_playlist(
                 .arg("--prefer-free-formats")
                 .arg(&individual_url);
 
-            match download_cmd.output() {
-                Ok(output) => {
-                    if output.status.success() {
-                        let downloaded = downloaded_count.fetch_add(1, Ordering::Relaxed) + 1;
-                        let current_progress =
-                            5.0 + (downloaded as f32 / remaining_videos as f32) * 90.0;
-
-                        // Save to database
-                        let download_record = yt_download_service::CreateYoutubeDownload {
-                            video_id: video_id.clone(),
-                            video_url: individual_url.clone(),
-                            title: Some(title.clone()),
-                            uploader: None,
-                            file_path: None,
-                        };
-
-                        if let Err(e) =
-                            yt_download_service::save_download(&pool, download_record).await
-                        {
-                            log::warn!("Failed to save download record for {}: {}", video_id, e);
-                        }
-
-                        send_progress(
-                            &session,
-                            DownloadProgress {
-                                status: format!(
-                                    "Downloaded {} of {} videos",
-                                    downloaded, remaining_videos
-                                ),
-                                progress: Some(current_progress),
-                                current_file: Some(title.clone()),
-                                total_files: Some(remaining_videos),
-                                completed_files: Some(downloaded),
-                                failed_files: Some(failed_count.load(Ordering::Relaxed)),
-                                is_cancelled: Some(cancelled.load(Ordering::Relaxed)),
-                            },
-                        )
-                        .await;
-
-                        true
-                    } else {
-                        failed_count.fetch_add(1, Ordering::Relaxed);
-                        log::error!(
-                            "Failed to download {}: {}",
-                            title,
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                        false
-                    }
-                }
+            let mut child = match download_cmd.spawn() {
+                Ok(c) => c,
                 Err(e) => {
+                    let _ = fs::remove_dir_all(&task_temp_dir).await;
                     failed_count.fetch_add(1, Ordering::Relaxed);
-                    log::error!("Error downloading {}: {}", title, e);
+                    log::error!("Failed to spawn yt-dlp for {}: {}", title, e);
+                    return false;
+                }
+            };
+
+            // Wait for child or cancellation
+            let mut cancelled_early = false;
+            let success = tokio::select! {
+                status = child.wait() => {
+                    status.map(|s| s.success()).unwrap_or(false)
+                }
+                _ = async {
+                    loop {
+                        if cancelled.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    }
+                } => {
+                    cancelled_early = true;
                     false
                 }
+            };
+
+            if cancelled_early {
+                log::info!("Killing download process for {} due to cancellation", title);
+                let _ = child.kill().await;
+            }
+
+            if success {
+                // Find the downloaded file in the temp directory
+                let mut downloaded_file_path = None;
+                if let Ok(mut entries) = fs::read_dir(&task_temp_dir).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("mp3") {
+                            downloaded_file_path = Some(path);
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(temp_file) = downloaded_file_path {
+                    let final_path = PathBuf::from(&output_dir).join(temp_file.file_name().unwrap());
+                    
+                    // Move the file to the final destination (atomic move)
+                    if let Err(e) = fs::rename(&temp_file, &final_path).await {
+                        log::error!("Failed to move file from {} to {}: {}", temp_file.display(), final_path.display(), e);
+                        let _ = fs::remove_dir_all(&task_temp_dir).await;
+                        failed_count.fetch_add(1, Ordering::Relaxed);
+                        return false;
+                    }
+
+                    // Clean up temp dir
+                    let _ = fs::remove_dir_all(&task_temp_dir).await;
+
+                    let downloaded = downloaded_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    let current_progress = 5.0 + (downloaded as f32 / remaining_videos as f32) * 90.0;
+
+                    // Save to database
+                    let download_record = yt_download_service::CreateYoutubeDownload {
+                        video_id: video_id.clone(),
+                        video_url: individual_url.clone(),
+                        title: Some(title.clone()),
+                        uploader: Some(uploader),
+                        file_path: Some(final_path.to_string_lossy().to_string()),
+                    };
+
+                    if let Err(e) = yt_download_service::save_download(&pool, download_record).await {
+                        log::warn!("Failed to save download record for {}: {}", video_id, e);
+                    }
+
+                    // Sync only this single file instead of the whole folder
+                    let db_obj = Database { pool: pool.clone() };
+                    match file_sync_service::sync_single_file(&db_obj, &final_path).await {
+                        Ok(true) => {
+                            log::info!("Successfully synced file: {}", final_path.display());
+                            // If we have an update channel, broadcast that a new song was created
+                            if let Some(ref tx) = session.update_tx {
+                                // We don't have the full record easily, but we can notify a refresh is needed or send the ID if we had it.
+                                // Actually sync_single_file probably doesn't return the record.
+                                // But generic "music_created" without payload can trigger a refresh in frontend.
+                                let mut msg = serde_json::Map::new();
+                                msg.insert("type".to_string(), serde_json::Value::String("music_bulk_updated".to_string()));
+                                msg.insert("payload".to_string(), serde_json::Value::Null);
+                                let _ = tx.send(serde_json::Value::Object(msg));
+                            }
+                        },
+                        Ok(false) => log::info!("File already exists in DB: {}", final_path.display()),
+                        Err(e) => log::warn!("Failed to sync file {}: {}", final_path.display(), e),
+                    }
+
+                    send_progress(
+                        &session,
+                        DownloadProgress {
+                            status: format!(
+                                "Downloaded {} of {} videos",
+                                downloaded, remaining_videos
+                            ),
+                            progress: Some(current_progress),
+                            current_file: Some(title.clone()),
+                            total_files: Some(remaining_videos),
+                            completed_files: Some(downloaded),
+                            failed_files: Some(failed_count.load(Ordering::Relaxed)),
+                            is_cancelled: Some(cancelled.load(Ordering::Relaxed)),
+                        },
+                    )
+                    .await;
+
+                    true
+                } else {
+                    log::error!("Download successful but could not find .mp3 file in {}", task_temp_dir);
+                    let _ = fs::remove_dir_all(&task_temp_dir).await;
+                    failed_count.fetch_add(1, Ordering::Relaxed);
+                    false
+                }
+            } else {
+                // If failed or cancelled, clean up the task-specific temp directory
+                let _ = fs::remove_dir_all(&task_temp_dir).await;
+                if !cancelled.load(Ordering::Relaxed) {
+                    failed_count.fetch_add(1, Ordering::Relaxed);
+                    log::error!("Failed to download {}: process exited with error", title);
+                }
+                false
             }
         });
+
 
         handles.push(handle);
     }

@@ -34,7 +34,8 @@ spec:
         - containerPort: 8081
         env:
         - name: RUST_LOG
-          value: debug
+          # Default to WARN to reduce log volume in cluster; override at deploy time if you need more verbosity
+          value: "warn,sqlx=warn,sqlx::query=warn"
         - name: RUST_BACKTRACE
           value: "1"
         - name: DATABASE_URL
@@ -49,6 +50,31 @@ spec:
             secretKeyRef:
               name: music-admin
               key: ADMIN_TOKEN_SHA256
+        - name: GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: music-admin
+              key: GOOGLE_CLIENT_ID
+        - name: GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: music-admin
+              key: GOOGLE_CLIENT_SECRET
+        - name: APP_URL
+          valueFrom:
+            secretKeyRef:
+              name: music-admin
+              key: APP_URL
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: music-admin
+              key: JWT_SECRET
+        - name: DISCOGS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: music-admin
+              key: DISCOGS_TOKEN
         - name: MUSIC_FOLDER
           value: /music
         volumeMounts:

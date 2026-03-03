@@ -1,10 +1,8 @@
 use crate::db::Database;
 use crate::models::{ArtistSummary, MusicFile};
 
-#[allow(dead_code)]
-pub struct ArtistService;
-
 /// Get all unique artists from the music library
+#[allow(dead_code)]
 pub async fn get_all_artists(db: &Database) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT artist FROM music_files WHERE artist IS NOT NULL AND artist != '' ORDER BY artist ASC"
@@ -42,13 +40,13 @@ pub async fn get_all_artists_with_summary(db: &Database) -> Result<Vec<ArtistSum
 }
 
 /// Get all music files by a specific artist (exact match)
+#[allow(dead_code)]
 pub async fn get_music_by_artist(
     db: &Database,
     artist: &str,
 ) -> Result<Vec<MusicFile>, sqlx::Error> {
-    sqlx::query_as::<_, MusicFile>(
-        "SELECT id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at FROM music_files WHERE artist = $1 ORDER BY title ASC"
-    )
+    let sql = format!("{} WHERE artist = $1 ORDER BY title ASC", crate::services::music_query_helpers::select_music_files());
+    sqlx::query_as::<_, MusicFile>(&sql)
     .bind(artist)
     .fetch_all(&db.pool)
     .await
@@ -61,18 +59,12 @@ pub async fn get_music_featuring_artist(
 ) -> Result<Vec<MusicFile>, sqlx::Error> {
     // Search for artist in title (for features/remixes) or as main artist
     let search_pattern = format!("%{}%", artist);
-    sqlx::query_as::<_, MusicFile>(
-        r#"
-        SELECT id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, created_at, updated_at 
-        FROM music_files 
-        WHERE artist = $1 
-           OR artist ILIKE $2
-           OR title ILIKE $2
-        ORDER BY 
-            CASE WHEN artist = $1 THEN 0 ELSE 1 END,
-            title ASC
-        "#
-    )
+    let sql = format!(
+        "{} WHERE artist = $1 OR artist ILIKE $2 OR title ILIKE $2 ORDER BY CASE WHEN artist = $1 THEN 0 ELSE 1 END, title ASC",
+        crate::services::music_query_helpers::select_music_files()
+    );
+    
+    sqlx::query_as::<_, MusicFile>(&sql)
     .bind(artist)
     .bind(&search_pattern)
     .fetch_all(&db.pool)

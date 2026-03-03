@@ -9,16 +9,18 @@
           @click="removeToast(toast.id)"
         >
           <div class="toast-icon">
-            <span v-if="toast.type === 'success'">✓</span>
-            <span v-else-if="toast.type === 'error'">✕</span>
-            <span v-else-if="toast.type === 'warning'">⚠</span>
-            <span v-else>ℹ</span>
+            <Icon v-if="toast.type === 'success'" name="check" :size="16" />
+            <Icon v-else-if="toast.type === 'error'" name="x" :size="16" />
+            <Icon v-else-if="toast.type === 'warning'" name="alert-triangle" :size="16" />
+            <Icon v-else name="info" :size="16" />
           </div>
           <div class="toast-content">
             <div class="toast-title">{{ toast.title }}</div>
             <div v-if="toast.message" class="toast-message">{{ toast.message }}</div>
           </div>
-          <button class="toast-close" @click.stop="removeToast(toast.id)">×</button>
+          <button class="toast-close" @click.stop="removeToast(toast.id)">
+            <Icon name="x" :size="16" />
+          </button>
         </div>
       </TransitionGroup>
     </div>
@@ -27,6 +29,7 @@
 
 <script setup lang="ts">
 import { useToast } from '../../composables/useToast'
+import Icon from './Icons.vue'
 
 const { toasts, removeToast } = useToast()
 </script>

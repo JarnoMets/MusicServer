@@ -16,6 +16,7 @@ pub struct BackfillProgress {
 
 #[derive(Clone)]
 pub struct BackfillSession {
+    #[allow(dead_code)]
     pub id: String,
     pub tx: broadcast::Sender<BackfillProgress>,
 }
@@ -24,10 +25,8 @@ type Sessions = RwLock<HashMap<String, BackfillSession>>;
 
 static BACKFILL_SESSIONS: OnceCell<Arc<Sessions>> = OnceCell::new();
 
-fn get_sessions() -> Arc<Sessions> {
-    BACKFILL_SESSIONS
-        .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
-        .clone()
+pub fn get_sessions() -> Arc<Sessions> {
+    BACKFILL_SESSIONS.get_or_init(|| Arc::new(RwLock::new(HashMap::new()))).clone()
 }
 
 pub async fn start_backfill(db: Database, alias: String, genre_id: uuid::Uuid) -> String {
@@ -74,17 +73,15 @@ pub async fn start_backfill(db: Database, alias: String, genre_id: uuid::Uuid) -
 
         // Count matching rows
         let (music_count, artist_count) =
-            match genre_label_service::preview_backfill(&db, &alias).await {
-                Ok(c) => c,
-                Err(_) => (0, 0),
-            };
+            (genre_label_service::preview_backfill(&db, &alias).await).unwrap_or((0, 0));
 
         let total = (music_count + artist_count) as usize;
         let mut processed: usize = 0;
 
         // Backfill music_files in chunks: select ids then update in batches
         if music_count > 0 {
-            let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM music_files WHERE guessed_genre IS NOT NULL AND lower(guessed_genre) = lower($1)")
+            // Include both confirmed genre and guessed_genre
+            let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM music_files WHERE (guessed_genre IS NOT NULL AND lower(guessed_genre) = lower($1)) OR (genre IS NOT NULL AND lower(genre) = lower($1))")
                 .bind(&alias)
                 .fetch_all(&db.pool)
                 .await
@@ -92,7 +89,9 @@ pub async fn start_backfill(db: Database, alias: String, genre_id: uuid::Uuid) -
 
             let chunk_size = 200usize;
             for chunk in ids.chunks(chunk_size) {
-                let _ = sqlx::query("UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE id = ANY($2)")
+                // Update both genre and guessed_genre columns
+                let _ = sqlx::query("UPDATE music_files SET guessed_genre = CASE WHEN lower(guessed_genre) = lower($1) THEN $2 ELSE guessed_genre END, genre = CASE WHEN lower(genre) = lower($1) THEN $2 ELSE genre END, updated_at = NOW() WHERE id = ANY($3)")
+                    .bind(&alias)
                     .bind(&canonical)
                     .bind(chunk)
                     .execute(&db.pool)
@@ -153,6 +152,7 @@ pub async fn start_backfill(db: Database, alias: String, genre_id: uuid::Uuid) -
     session_id
 }
 
+#[allow(dead_code)]
 pub async fn subscribe(session_id: &str) -> Option<broadcast::Receiver<BackfillProgress>> {
     let sessions = get_sessions();
     let map = sessions.read().await;

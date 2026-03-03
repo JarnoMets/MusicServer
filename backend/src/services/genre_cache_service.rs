@@ -73,6 +73,7 @@ pub async fn get_all_cached_genres(db: &Database) -> Result<Vec<ArtistGenre>, sq
 }
 
 /// Delete a cached genre entry
+#[allow(dead_code)]
 pub async fn delete_cached_genre(db: &Database, artist_name: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM artist_genres WHERE artist_name = $1")
         .bind(artist_name)

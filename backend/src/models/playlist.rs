@@ -49,3 +49,8 @@ pub struct PlaylistTrackRequest {
     pub music_file_id: Uuid,
     pub position: Option<i32>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ReorderPlaylistTracksRequest {
+    pub music_file_ids: Vec<Uuid>,
+}
