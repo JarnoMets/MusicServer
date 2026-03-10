@@ -1,5 +1,5 @@
 #!/bin/bash
-AUTH_TOKEN="REDACTED_AUTH_TOKEN"
+AUTH_TOKEN="${AUTH_TOKEN:?Set AUTH_TOKEN env var}"
 BASE_URL="https://music.jarnomets.com/api"
 
 # Fetch all tracks where title starts with artist + " - "

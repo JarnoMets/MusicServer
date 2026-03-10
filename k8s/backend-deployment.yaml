@@ -39,7 +39,7 @@ spec:
         - name: RUST_BACKTRACE
           value: "1"
         - name: DATABASE_URL
-          value: postgres://postgresuser:postgrespwd@postgres.postgres:5432/musicdb
+          value: postgres://postgresuser:your-password-here@postgres.postgres:5432/musicdb
           # RUN_MIGRATIONS: When set to "false" or "0" the backend will not run programmatic
           # migrations at startup. Use this when your database is managed and migrations must be
           # applied via an external process or administrative user.

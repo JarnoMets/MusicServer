@@ -4,16 +4,16 @@ services:
   postgres:
     image: postgres:15
     environment:
-      - POSTGRES_DB=musicdb
-      - POSTGRES_USER=postgresuser
-      - POSTGRES_PASSWORD=postgrespwd
+      - POSTGRES_DB=${POSTGRES_DB:-musicdb}
+      - POSTGRES_USER=${POSTGRES_USER:-postgresuser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgrespwd}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgresuser -d musicdb"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgresuser} -d ${POSTGRES_DB:-musicdb}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -27,11 +27,11 @@ services:
     environment:
       # Default to WARN to reduce log volume; override with RUST_LOG env when needed
       - RUST_LOG=warn,sqlx=warn,sqlx::query=warn
-      - DATABASE_URL=postgres://postgresuser:postgrespwd@postgres:5432/musicdb
-      - GOOGLE_CLIENT_ID=REDACTED_GOOGLE_CLIENT_ID
-      - GOOGLE_CLIENT_SECRET=REDACTED_GOOGLE_CLIENT_SECRET
-      - JWT_SECRET=REDACTED_JWT_SECRET
-      - APP_URL=https://music.jarnomets.com
+      - DATABASE_URL=postgres://${POSTGRES_USER:-postgresuser}:${POSTGRES_PASSWORD:-postgrespwd}@postgres:5432/${POSTGRES_DB:-musicdb}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - APP_URL=${APP_URL:-https://music.jarnomets.com}
       - DISCOGS_TOKEN=${DISCOGS_TOKEN:-}
     restart: unless-stopped
     depends_on:

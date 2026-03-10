@@ -1,9 +1,10 @@
 import requests
 import json
 import time
+import os
 
-base_url = "https://music.jarnomets.com/api"
-token = "REDACTED_AUTH_TOKEN"
+base_url = os.environ.get("MUSIC_API_URL", "https://music.jarnomets.com/api")
+token = os.environ["AUTH_TOKEN"]
 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 def get_canonical_genres():
