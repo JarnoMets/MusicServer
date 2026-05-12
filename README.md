@@ -91,13 +91,22 @@ MusicServer/
 │   │   ├── db/                 # Database layer & schema migrations
 │   │   ├── models/             # Data models
 │   │   ├── services/           # Business logic
-│   │   │   ├── bpm_service.rs
-│   │   │   ├── discogs_service.rs
-│   │   │   ├── genre_detection.rs
+│   │   │   ├── artist_service.rs
+│   │   │   ├── audio_edit_service.rs
+│   │   │   ├── audit_service.rs
 │   │   │   ├── auto_download_service.rs
 │   │   │   ├── auto_genre_lookup_service.rs
 │   │   │   ├── auto_metadata_lookup_service.rs
+│   │   │   ├── autoplay_service.rs
+│   │   │   ├── bpm_service.rs
+│   │   │   ├── cache_service.rs
+│   │   │   ├── discogs_service.rs
+│   │   │   ├── file_sync_service.rs
+│   │   │   ├── genre_detection.rs
+│   │   │   ├── internet_stream_service.rs
+│   │   │   ├── key_service.rs
 │   │   │   ├── playlist_export_service.rs
+│   │   │   ├── playlist_service.rs
 │   │   │   ├── rekordbox_service.rs
 │   │   │   ├── yt_download_service.rs
 │   │   │   └── …
