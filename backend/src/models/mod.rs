@@ -1,3 +1,4 @@
+pub mod access_token;
 pub mod app_state;
 pub mod auto_download;
 pub mod genre;
@@ -11,6 +12,10 @@ pub mod metadata;
 pub mod metadata_suggestion;
 
 pub use app_state::AppState;
+pub use access_token::{
+    AccessToken, AccessTokenResponse, CreateAccessTokenRequest, CreateAccessTokenResponse,
+    UpdateAccessTokenRequest,
+};
 pub use auto_download::{AutoDownloadConfig, UpdateAutoDownloadConfigRequest, AutoDownloadStatus};
 pub use metadata::MetadataConfig;
 pub use genre::ArtistGenre;

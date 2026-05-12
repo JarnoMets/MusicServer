@@ -34,6 +34,7 @@ pub async fn run_migrations(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
     migration_23_beat_grid_offset(pool).await?;
     migration_24_beat_map(pool).await?;
     migration_25_autoplay_settings(pool).await?;
+    migration_26_access_tokens(pool).await?;
 
     log::info!("Database schema setup completed successfully");
     Ok(())
@@ -779,6 +780,46 @@ async fn migration_17_audit_logs(pool: &Pool<Postgres>) -> Result<(), sqlx::Erro
     record_migration(pool, 17, "Create audit_logs table for smart diffs").await
 }
 
+async fn migration_26_access_tokens(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 26).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 26: Create access_tokens table for user-generated API tokens");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS access_tokens (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name VARCHAR(255) NOT NULL,
+            token_hash VARCHAR(64) NOT NULL UNIQUE,
+            can_read BOOLEAN NOT NULL DEFAULT true,
+            can_create BOOLEAN NOT NULL DEFAULT false,
+            can_edit BOOLEAN NOT NULL DEFAULT false,
+            can_delete BOOLEAN NOT NULL DEFAULT false,
+            last_used_at TIMESTAMPTZ,
+            expires_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_access_tokens_user_id ON access_tokens(user_id)"
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens(token_hash)"
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 26, "Create access_tokens table for user-generated API tokens").await
+}
 
 /// Fix timestamp columns for databases that were created with TIMESTAMP instead of TIMESTAMPTZ
 /// This is safe to run multiple times - it only converts if needed

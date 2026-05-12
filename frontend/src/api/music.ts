@@ -246,6 +246,28 @@ export const musicAPI = {
   getMetadataConfig: () => api.get('/admin/metadata/config'),
   updateMetadataConfig: (data: { metadata_source?: string; discogs_token?: string }) =>
     api.put('/admin/metadata/config', data),
+
+  // Personal Access Tokens
+  listTokens: () => api.get('/tokens'),
+  getToken: (id: string) => api.get(`/tokens/${id}`),
+  createToken: (data: {
+    name: string
+    can_read: boolean
+    can_create: boolean
+    can_edit: boolean
+    can_delete: boolean
+    expires_at?: string | null
+  }) => api.post('/tokens', data),
+  updateToken: (id: string, data: {
+    name?: string
+    can_read?: boolean
+    can_create?: boolean
+    can_edit?: boolean
+    can_delete?: boolean
+    expires_at?: string | null
+    clear_expires_at?: boolean
+  }) => api.patch(`/tokens/${id}`, data),
+  deleteToken: (id: string) => api.delete(`/tokens/${id}`),
 }
 
 export default api

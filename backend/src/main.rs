@@ -15,6 +15,7 @@ use music_server::models::AppState;
 use music_server::routes;
 use music_server::audit_routes;
 use music_server::auth_routes;
+use music_server::token_routes;
 use music_server::yt_downloader;
 use music_server::services;
 use uuid::Uuid;
@@ -216,6 +217,8 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api")
                     .route("/health", web::get().to(routes::health_check))
                     .route("/health/db", web::get().to(routes::db_health_check))
+                    // Machine-readable API documentation (unauthenticated)
+                    .route("/llm.txt", web::get().to(serve_llm_txt))
                     // Authentication routes (unprotected)
                     .service(
                         web::scope("/auth")
@@ -228,6 +231,12 @@ async fn main() -> std::io::Result<()> {
                             .wrap(AuthMiddleware)
                             // Identity route
                             .route("/me", web::get().to(auth_routes::get_me))
+                            // Personal access token management (requires JWT auth)
+                            .route("/tokens", web::get().to(token_routes::list_tokens))
+                            .route("/tokens", web::post().to(token_routes::create_token))
+                            .route("/tokens/{id}", web::get().to(token_routes::get_token))
+                            .route("/tokens/{id}", web::patch().to(token_routes::update_token))
+                            .route("/tokens/{id}", web::delete().to(token_routes::delete_token))
                             // Existing routes that now require authentication
                             .route("/playlists", web::get().to(routes::get_playlists))
                             .route("/playlists", web::post().to(routes::create_playlist))
@@ -443,4 +452,12 @@ async fn main() -> std::io::Result<()> {
     .keep_alive(std::time::Duration::from_secs(75))  // Keep-alive timeout for long uploads
     .run()
     .await
+}
+
+/// Serve machine-readable API documentation for LLM tooling.
+/// Available at `GET /api/llm.txt` without authentication.
+async fn serve_llm_txt() -> actix_web::HttpResponse {
+    actix_web::HttpResponse::Ok()
+        .content_type("text/plain; charset=utf-8")
+        .body(include_str!("llm.txt"))
 }
