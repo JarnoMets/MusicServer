@@ -14,7 +14,7 @@
 //! | PATCH  | /api/tokens/:id | Update a token's name or permissions |
 //! | DELETE | /api/tokens/:id | Revoke / delete a token |
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse, HttpMessage};
 use uuid::Uuid;
 
 use crate::auth_middleware::{AuthInfo, AuthType};

@@ -1,5 +1,5 @@
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::{Error, web};
+use actix_web::{Error, web, HttpMessage};
 use actix_web::http::header::AUTHORIZATION;
 use futures_util::future::{ready, LocalBoxFuture, Ready};
 use std::rc::Rc;
