@@ -964,13 +964,10 @@ pub async fn get_metadata_suggestions(
     };
 
     // Also return total count for pagination
-    let total_count: (i64,) = match sqlx::query_as("SELECT COUNT(*) FROM metadata_suggestions")
+    let total_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM metadata_suggestions")
         .fetch_one(&state.db.pool)
         .await
-    {
-        Ok(c) => c,
-        Err(_) => (0,),
-    };
+        .unwrap_or_default();
 
     HttpResponse::Ok().json(serde_json::json!({
         "suggestions": suggestions,

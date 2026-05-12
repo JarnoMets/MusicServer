@@ -36,6 +36,12 @@ pub struct ParsedArtists {
     pub producers: Vec<String>,
 }
 
+impl Default for ParsedArtists {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParsedArtists {
     pub fn new() -> Self {
         Self {

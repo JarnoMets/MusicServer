@@ -263,11 +263,11 @@ pub async fn suggest_similar(
     let genre_names = sqlx::query_scalar::<_, String>("SELECT name FROM genres")
         .fetch_all(&db.pool)
         .await?;
-    candidates.extend(genre_names.into_iter());
+    candidates.extend(genre_names);
     let alias_names = sqlx::query_scalar::<_, String>("SELECT alias FROM genre_aliases")
         .fetch_all(&db.pool)
         .await?;
-    candidates.extend(alias_names.into_iter());
+    candidates.extend(alias_names);
 
     // Score and sort
     let mut scored: Vec<(String, f64)> = candidates

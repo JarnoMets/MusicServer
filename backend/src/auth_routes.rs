@@ -298,16 +298,19 @@ pub async fn get_me(state: web::Data<AppState>, req: HttpRequest) -> impl Respon
     use crate::auth_middleware::AuthInfo;
 
     // Prefer the AuthInfo extension set by the middleware — works for all auth types.
+    let user_id = req.extensions().get::<AuthInfo>().and_then(|ai| ai.user_id);
+
+    if let Some(user_id) = user_id {
+        return match state.db.get_user_by_id(&user_id).await {
+            Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
+            Err(e) => {
+                log::error!("Failed to get user by id: {}", e);
+                HttpResponse::Unauthorized().json(serde_json::json!({ "error": "User not found" }))
+            }
+        };
+    }
+
     if let Some(auth_info) = req.extensions().get::<AuthInfo>() {
-        if let Some(user_id) = auth_info.user_id {
-            return match state.db.get_user_by_id(&user_id).await {
-                Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
-                Err(e) => {
-                    log::error!("Failed to get user by id: {}", e);
-                    HttpResponse::Unauthorized().json(serde_json::json!({ "error": "User not found" }))
-                }
-            };
-        }
         // Static admin / API token — no associated user record.
         return HttpResponse::Ok().json(serde_json::json!({
             "type": "service_account",

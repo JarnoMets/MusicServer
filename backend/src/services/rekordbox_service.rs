@@ -108,7 +108,7 @@ async fn run_analysis_pass(db: &Database) -> Result<(), sqlx::Error> {
         // 2. Process Initial Key
         if let Some(k) = key_tag.filter(|s| !s.is_empty() && s != "NONE") {
             update.initial_key = Some(crate::services::key_service::to_camelot(&k));
-        } else if file.initial_key.is_none() || file.initial_key.as_deref().unwrap_or("") == "" || file.initial_key.as_deref().unwrap_or("") == "NONE" {
+        } else if file.initial_key.is_none() || file.initial_key.as_deref().unwrap_or("").is_empty() || file.initial_key.as_deref().unwrap_or("") == "NONE" {
             // Signal detection if tag is missing and DB value is invalid
             let path_clone = file.file_path.clone();
             match tokio::task::spawn_blocking(move || {

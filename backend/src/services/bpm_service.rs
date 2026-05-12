@@ -109,12 +109,7 @@ pub fn detect_bpm(file_path: &str) -> Result<BpmResult, BpmError> {
     let max_analyze_frames = sample_rate as u64 * 600;
     let mut processing_buffer: Vec<f32> = Vec::with_capacity(hop_size);
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            _ => break,
-        };
-        
+    while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id { continue; }
         
         let decoded = match decoder.decode(&packet) {

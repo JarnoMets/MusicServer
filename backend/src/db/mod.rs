@@ -215,6 +215,7 @@ impl Database {
         hex::encode(hasher.finalize())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_access_token(
         &self,
         user_id: &Uuid,
@@ -299,6 +300,7 @@ impl Database {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_access_token(
         &self,
         id: &Uuid,
