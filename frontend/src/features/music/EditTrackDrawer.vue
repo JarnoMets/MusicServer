@@ -22,6 +22,7 @@ const emit = defineEmits<{
   'update:artist': [value: string]
   'update:album': [value: string]
   'update:genre': [value: string]
+  'update:genre-id': [value: string]
   'update:release_date': [value: string]
   'update:bpm': [value: number | null]
   'update:initial_key': [value: string]
@@ -52,8 +53,9 @@ watch(() => props.editState.open, (open) => {
   }
 })
 
-const selectGenre = (name: string) => {
-  emit('update:genre', name)
+const selectGenre = (genre: { id: string; name: string }) => {
+  emit('update:genre', genre.name)
+  emit('update:genre-id', genre.id)
   genreDropdownOpen.value = false
   genreSearch.value = ''
 }
@@ -62,6 +64,7 @@ const handleGenreInput = (e: Event) => {
   const value = (e.target as HTMLInputElement).value
   genreSearch.value = value
   emit('update:genre', value)
+  emit('update:genre-id', '')  // clear id when typing freeform
   genreDropdownOpen.value = true
 }
 
@@ -69,6 +72,7 @@ const createAndSelectGenre = () => {
   const name = newGenreName.value.trim()
   if (name) {
     emit('update:genre', name)
+    emit('update:genre-id', '')  // no id for a newly typed genre
     showNewGenreInput.value = false
     newGenreName.value = ''
     genreDropdownOpen.value = false
@@ -202,7 +206,7 @@ const detectBpm = async () => {
                   type="button"
                   class="genre-option"
                   :class="{ active: editState.form.genre === g.name }"
-                  @mousedown.prevent="selectGenre(g.name)"
+                  @mousedown.prevent="selectGenre(g)"
                 >
                   {{ g.name }}
                   <span v-if="g.description" class="genre-desc">{{ g.description }}</span>

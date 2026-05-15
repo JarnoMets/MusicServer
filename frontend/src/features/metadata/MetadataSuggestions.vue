@@ -52,7 +52,7 @@
                 <div class="track-artist">{{ suggestion.track?.artist || 'Unknown Artist' }}</div>
                 <div class="track-meta-row">
                   <span class="meta-tag" v-if="suggestion.track?.album">{{ suggestion.track.album }}</span>
-                  <span class="meta-tag" v-if="suggestion.track?.genre">{{ suggestion.track.genre }}</span>
+                  <span class="meta-tag" v-if="suggestion.track?.genre_name">{{ suggestion.track.genre_name }}</span>
                   <span class="meta-tag" v-if="suggestion.track?.release_date">{{ suggestion.track.release_date }}</span>
                 </div>
               </div>
@@ -68,7 +68,7 @@
                   <div class="field" :class="{ highlight: suggestion.album && suggestion.album !== suggestion.track?.album }" v-if="suggestion.album">
                     <Icon name="disc" :size="14" /> Album: {{ suggestion.album }}
                   </div>
-                  <div class="field" :class="{ highlight: suggestion.genre && suggestion.genre !== suggestion.track?.genre }" v-if="suggestion.genre">
+                  <div class="field" :class="{ highlight: suggestion.genre && suggestion.genre !== suggestion.track?.genre_name }" v-if="suggestion.genre">
                     <Icon name="tag" :size="14" /> Genre: {{ suggestion.genre }}
                   </div>
                   <div class="field" :class="{ highlight: suggestion.release_date && suggestion.release_date !== suggestion.track?.release_date }" v-if="suggestion.release_date">
@@ -229,7 +229,7 @@ const fetchSuggestions = async () => {
       if (s.album && (!track.album || s.album !== track.album)) return true
 
       // Genre change
-      if (s.genre && (!track.genre || s.genre !== track.genre)) return true
+      if (s.genre && s.genre !== track.genre_name) return true
 
       // Release date change: compare normalized ISO or year
       if (s.release_date) {
@@ -303,10 +303,9 @@ const applySuggestion = async (suggestion: MetadataSuggestion & { track?: MusicF
     }
 
     await musicAPI.updateMusicFile(suggestion.music_file_id, {
-      title: suggestion.track.title, 
-      artist: suggestion.track.artist || '', 
+      title: suggestion.track.title,
+      artist: suggestion.track.artist || '',
       album: suggestion.album || suggestion.track.album || '',
-      genre: suggestion.genre || suggestion.track.genre || '',
       release_date: releaseDate || undefined,
       metadata_analyzed: true
     })

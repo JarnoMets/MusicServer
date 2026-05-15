@@ -4,7 +4,7 @@ use crate::models::{
     BulkRenameResponse, CreateMusicFileRequest, MusicFile, MusicQueryParams, 
     UpdateMusicFileRequest, CreateAuditLogRequest
 };
-use crate::services::music_query_helpers::{self, select_music_files, MUSIC_FILE_COLUMNS};
+use crate::services::music_query_helpers::{select_music_files};
 use sqlx::QueryBuilder;
 use uuid::Uuid;
 use crate::services::audit_service;
@@ -13,113 +13,30 @@ pub async fn get_all_music_files(
     db: &Database,
     params: MusicQueryParams,
 ) -> Result<Vec<MusicFile>, sqlx::Error> {
-    let mut files = perform_music_query(db, params).await?;
-
-    // Post-process to resolve canonical genre names for display
-    let resolver_map = crate::services::genre_label_service::get_genre_resolver_map(db).await?;
-    for file in &mut files {
-        let raw_genre = file.genre.as_deref()
-            .or(file.guessed_genre.as_deref())
-            .filter(|s| !s.is_empty());
-        
-        if let Some(raw) = raw_genre {
-           let resolved = crate::services::genre_label_service::resolve_genre_name(raw, &resolver_map);
-           // We override the 'genre' field for display if it's different/canonical
-           // If it's a confirmed genre, keep that unless it has an even better master mapping
-           if file.genre.is_some() {
-               file.genre = Some(resolved);
-           } else {
-               file.guessed_genre = Some(resolved);
-           }
-        }
-    }
-
-    Ok(files)
+    perform_music_query(db, params).await
 }
 
-/// The actual SQL query logic moved to a helper
+/// The actual SQL query logic
 async fn perform_music_query(
     db: &Database,
     params: MusicQueryParams,
 ) -> Result<Vec<MusicFile>, sqlx::Error> {
-    // If a genre filter is specified and is a canonical genre, also include aliases in the filter
-    if let Some(ref genre_filter) = params.genre {
-        let matching_genres = music_query_helpers::get_all_matching_genres(db, genre_filter).await?;
-        
-        // Build dynamic filter that matches any of the canonical genre or its aliases
-        let mut builder = QueryBuilder::new(format!(
-            "{} WHERE 1=1",
-            select_music_files()
-        ));
-        
-        if !matching_genres.is_empty() {
-            builder.push(" AND (");
-            for (i, genre) in matching_genres.iter().enumerate() {
-                if i > 0 {
-                    builder.push(" OR ");
-                }
-                builder.push("(genre = ").push_bind(genre.clone()).push(" OR guessed_genre = ").push_bind(genre.clone()).push(")");
-            }
-            builder.push(")");
-        }
-        
-        // Apply other filters (search, artist, unconfirmed_only, missing_metadata)
-        // But skip the genre filter since we've already handled it above
-        let mut temp_params = params.clone();
-        temp_params.genre = None;
-        music_query_helpers::apply_music_filters(&mut builder, &temp_params);
-        
-        let sort_column = match params.sort.as_deref() {
-            Some("artist") => "artist",
-            Some("album") => "album",
-            Some("genre") => "genre",
-            Some("duration") => "duration",
-            Some("created_at") => "created_at",
-            Some("updated_at") => "updated_at",
-            Some("release_date") => "release_date",
-            _ => "title",
-        };
-        let order = match params.order.as_deref() {
-            Some("desc") | Some("DESC") => "DESC",
-            _ => "ASC",
-        };
-        
-        builder
-            .push(" ORDER BY ")
-            .push(sort_column)
-            .push(" ")
-            .push(order);
-        
-        if let Some(limit) = params.limit {
-            builder.push(" LIMIT ").push_bind(limit);
-        }
-        if let Some(offset) = params.offset {
-            builder.push(" OFFSET ").push_bind(offset);
-        }
-        
-        return builder
-            .build_query_as::<MusicFile>()
-            .fetch_all(&db.pool)
-            .await;
-    }
-    
-    // Standard flow when no genre filter or genre is not mapped
     let mut builder = QueryBuilder::new(format!(
         "{} WHERE 1=1",
         select_music_files()
     ));
 
-    music_query_helpers::apply_music_filters(&mut builder, &params);
+    crate::services::music_query_helpers::apply_music_filters(&mut builder, &params);
 
     let sort_column = match params.sort.as_deref() {
-        Some("artist") => "artist",
-        Some("album") => "album",
-        Some("genre") => "genre",
-        Some("duration") => "duration",
-        Some("created_at") => "created_at",
-        Some("updated_at") => "updated_at",
-        Some("release_date") => "release_date",
-        _ => "title",
+        Some("artist") => "mf.artist",
+        Some("album") => "mf.album",
+        Some("genre") => "g.name",
+        Some("duration") => "mf.duration",
+        Some("created_at") => "mf.created_at",
+        Some("updated_at") => "mf.updated_at",
+        Some("release_date") => "mf.release_date",
+        _ => "mf.title",
     };
     let order = match params.order.as_deref() {
         Some("desc") | Some("DESC") => "DESC",
@@ -153,14 +70,14 @@ pub async fn create_music_file(
     let now = chrono::Utc::now();
 
     sqlx::query(
-        "INSERT INTO music_files (id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, track_number, file_hash, bpm, initial_key, beat_grid_offset, beat_map, metadata_analyzed, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
+        "INSERT INTO music_files (id, title, artist, album, genre_id, genre_source, release_date, duration, file_path, track_number, file_hash, bpm, initial_key, beat_grid_offset, beat_map, metadata_analyzed, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
     )
     .bind(id)
     .bind(&req.title)
     .bind(&req.artist)
     .bind(&req.album)
-    .bind(&req.genre)
-    .bind(&req.guessed_genre)
+    .bind(req.genre_id)
+    .bind(&req.genre_source)
     .bind(req.release_date)
     .bind(req.duration)
     .bind(&req.file_path)
@@ -176,17 +93,14 @@ pub async fn create_music_file(
     .execute(&db.pool)
     .await?;
 
-    // Genre detection is now handled separately by background processes
-    // This keeps the upload fast by not blocking on genre lookups
-    let final_guessed_genre = req.guessed_genre.clone();
-
     Ok(MusicFile {
         id,
         title: req.title,
         artist: req.artist,
         album: req.album,
-        genre: req.genre,
-        guessed_genre: final_guessed_genre,
+        genre_id: req.genre_id,
+        genre_name: None, // would need a JOIN to resolve; callers can fetch via get_music_file
+        genre_source: req.genre_source,
         release_date: req.release_date,
         duration: req.duration,
         file_path: req.file_path,
@@ -239,18 +153,18 @@ pub async fn update_music_file(
         builder.push("album = ").push_bind(album);
         has_set = true;
     }
-    if let Some(genre) = req.genre {
+    if let Some(genre_id) = req.genre_id {
         if has_set {
             builder.push(", ");
         }
-        builder.push("genre = ").push_bind(genre);
+        builder.push("genre_id = ").push_bind(genre_id);
         has_set = true;
     }
-    if let Some(guessed_genre) = req.guessed_genre {
+    if let Some(genre_source) = req.genre_source {
         if has_set {
             builder.push(", ");
         }
-        builder.push("guessed_genre = ").push_bind(guessed_genre);
+        builder.push("genre_source = ").push_bind(genre_source);
         has_set = true;
     }
     if let Some(release_date) = req.release_date {
@@ -314,13 +228,10 @@ pub async fn update_music_file(
         return Ok(Some(old_file));
     }
 
-    builder.push(", updated_at = NOW() WHERE id = ").push_bind(id).push(" RETURNING ").push(MUSIC_FILE_COLUMNS);
-    let result = builder
-        .build_query_as::<MusicFile>()
-        .fetch_all(&db.pool)
-        .await?;
+    builder.push(", updated_at = NOW() WHERE id = ").push_bind(id);
+    builder.build().execute(&db.pool).await?;
 
-    let updated_file = result.first().cloned();
+    let updated_file = get_music_file(db, id).await?;
 
     if let Some(new_file) = &updated_file {
         let new_values = serde_json::to_value(new_file).unwrap_or(serde_json::Value::Null);
@@ -340,7 +251,7 @@ pub async fn update_music_file(
 }
 
 pub async fn get_music_file(db: &Database, id: Uuid) -> Result<Option<MusicFile>, sqlx::Error> {
-    let sql = format!("{} WHERE id = $1", select_music_files());
+    let sql = format!("{} WHERE mf.id = $1", select_music_files());
     sqlx::query_as::<_, MusicFile>(&sql)
         .bind(id)
         .fetch_optional(&db.pool)
@@ -383,7 +294,7 @@ pub async fn is_duplicate_path(db: &Database, file_path: &str) -> Result<bool, s
 /// Get an existing music file by its hash
 #[allow(dead_code)]
 pub async fn get_by_hash(db: &Database, file_hash: &str) -> Result<Option<MusicFile>, sqlx::Error> {
-    let sql = format!("{} WHERE file_hash = $1", select_music_files());
+    let sql = format!("{} WHERE mf.file_hash = $1", select_music_files());
     sqlx::query_as::<_, MusicFile>(&sql)
         .bind(file_hash)
         .fetch_optional(&db.pool)
@@ -431,49 +342,12 @@ pub async fn get_music_stats(
     db: &Database,
     params: MusicQueryParams,
 ) -> Result<MusicStats, sqlx::Error> {
-    // If a genre filter is specified and is a canonical genre, also include aliases in the filter
-    if let Some(ref genre_filter) = params.genre {
-        let matching_genres = music_query_helpers::get_all_matching_genres(db, genre_filter).await?;
-        
-        // Build dynamic filter that matches any of the canonical genre or its aliases
-        let mut builder = QueryBuilder::new(
-            "SELECT COUNT(*) as total_count, COALESCE(SUM(duration), 0) as total_duration_ms FROM music_files WHERE 1=1"
-        );
-        
-        if !matching_genres.is_empty() {
-            builder.push(" AND (");
-            for (i, genre) in matching_genres.iter().enumerate() {
-                if i > 0 {
-                    builder.push(" OR ");
-                }
-                builder.push("(genre = ").push_bind(genre.clone()).push(" OR guessed_genre = ").push_bind(genre.clone()).push(")");
-            }
-            builder.push(")");
-        }
-        
-        // Apply other filters (search, artist, unconfirmed_only, missing_metadata)
-        // But skip the genre filter since we've already handled it above
-        let mut temp_params = params.clone();
-        temp_params.genre = None;
-        music_query_helpers::apply_music_filters(&mut builder, &temp_params);
-        
-        let row: (i64, i64) = builder
-            .build_query_as::<(i64, i64)>()
-            .fetch_one(&db.pool)
-            .await?;
-        
-        return Ok(MusicStats {
-            total_count: row.0,
-            total_duration_ms: row.1,
-        });
-    }
-    
-    // Standard flow when no genre filter or genre is not mapped
     let mut builder = QueryBuilder::new(
-        "SELECT COUNT(*) as total_count, COALESCE(SUM(duration), 0) as total_duration_ms FROM music_files WHERE 1=1",
+        "SELECT COUNT(*) as total_count, COALESCE(SUM(mf.duration), 0) as total_duration_ms \
+         FROM music_files mf LEFT JOIN genres g ON mf.genre_id = g.id WHERE 1=1",
     );
 
-    music_query_helpers::apply_music_filters(&mut builder, &params);
+    crate::services::music_query_helpers::apply_music_filters(&mut builder, &params);
 
     let row: (i64, i64) = builder
         .build_query_as::<(i64, i64)>()
@@ -532,7 +406,7 @@ pub async fn bulk_update_music(
     }
 
     // Get old files for audit log
-    let mut old_files_builder = QueryBuilder::new(format!("{} WHERE id IN (", select_music_files()));
+    let mut old_files_builder = QueryBuilder::new(format!("{} WHERE mf.id IN (", select_music_files()));
     let mut it = req.ids.iter().peekable();
     while let Some(id) = it.next() {
         old_files_builder.push_bind(id);
@@ -546,9 +420,9 @@ pub async fn bulk_update_music(
     let mut builder = QueryBuilder::new("UPDATE music_files SET ");
     let mut first = true;
 
-    if let Some(genre) = &req.genre {
+    if let Some(genre_id) = &req.genre_id {
         if !first { builder.push(", "); }
-        builder.push("genre = ").push_bind(genre);
+        builder.push("genre_id = ").push_bind(*genre_id);
         first = false;
     }
 
@@ -628,7 +502,7 @@ pub async fn bulk_update_music(
 
     if updated_count > 0 {
         // Get new files for audit log
-        let mut new_files_builder = QueryBuilder::new(format!("{} WHERE id IN (", select_music_files()));
+        let mut new_files_builder = QueryBuilder::new(format!("{} WHERE mf.id IN (", select_music_files()));
         let mut it = req.ids.iter().peekable();
         while let Some(id) = it.next() {
             new_files_builder.push_bind(id);
@@ -673,16 +547,11 @@ pub async fn bulk_rename_by_regex(
     };
     
     // Get all music files
-    let sql = format!("{} ORDER BY title", select_music_files());
+    let sql = format!("{} ORDER BY mf.title", select_music_files());
     let all_music = sqlx::query_as::<_, MusicFile>(&sql)
         .fetch_all(&db.pool)
         .await?;
 
-    let returning_sql = format!(
-        "UPDATE music_files SET {{}} = $1, updated_at = NOW() WHERE id = $2 RETURNING {}",
-        MUSIC_FILE_COLUMNS
-    );
-    
     let mut updated_files = Vec::new();
     
     // Process each file
@@ -707,20 +576,22 @@ pub async fn bulk_rename_by_regex(
             continue;
         }
         
-        // Update the field in the database
-        let update_sql = returning_sql.replace("{}", field);
+        // Update the field in the database, then re-fetch via JOIN to include genre_name
+        let update_sql = format!("UPDATE music_files SET {} = $1, updated_at = NOW() WHERE id = $2", field);
         let bind_value: Option<&str> = if field != "title" && new_value.is_empty() {
             None
         } else {
             Some(&new_value)
         };
-        let updated = sqlx::query_as::<_, MusicFile>(&update_sql)
+        sqlx::query(&update_sql)
             .bind(bind_value)
             .bind(music_file.id)
-            .fetch_one(&db.pool)
+            .execute(&db.pool)
             .await?;
-        
-        updated_files.push(updated);
+
+        if let Some(updated) = get_music_file(db, music_file.id).await? {
+            updated_files.push(updated);
+        }
     }
     
     let updated_count = updated_files.len() as i32;
@@ -758,7 +629,7 @@ pub async fn bulk_add_to_playlist_by_regex(
     }
     
     // Get all music files that match the pattern
-    let sql = format!("{} ORDER BY title", select_music_files());
+    let sql = format!("{} ORDER BY mf.title", select_music_files());
     let all_music = sqlx::query_as::<_, MusicFile>(&sql)
         .fetch_all(&db.pool)
         .await?;

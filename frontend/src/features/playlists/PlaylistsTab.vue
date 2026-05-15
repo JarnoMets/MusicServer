@@ -272,6 +272,7 @@
       @update:artist="v => editState.form.artist = v"
       @update:album="v => editState.form.album = v"
       @update:genre="v => editState.form.genre = v"
+      @update:genre-id="v => editState.form.genre_id = v"
       @update:release_date="v => editState.form.release_date = v"
       @apply-suggestion="applySuggestedReleaseDate"
       @save="saveEdit"
@@ -441,7 +442,7 @@ const handleConfirmGenre = (track: any) => {
 
 const handleGenreConfirmed = () => {
   if (confirmGenreModal.value.track) {
-    setTrackGenre(confirmGenreModal.value.track, confirmGenreModal.value.track.guessed_genre)
+    setTrackGenre(confirmGenreModal.value.track, confirmGenreModal.value.track.genre_id || '')
   }
   confirmGenreModal.value.isOpen = false
 }

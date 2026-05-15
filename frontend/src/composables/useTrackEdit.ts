@@ -17,6 +17,7 @@ export const useTrackEdit = (onSaveComplete: () => void) => {
       artist: '',
       album: '',
       genre: '',
+      genre_id: '',
       release_date: '',
       bpm: null,
       initial_key: '',
@@ -33,7 +34,8 @@ export const useTrackEdit = (onSaveComplete: () => void) => {
     editState.form.title = track.title
     editState.form.artist = track.artist || ''
     editState.form.album = track.album || ''
-    editState.form.genre = track.genre || track.guessed_genre || ''
+    editState.form.genre = track.genre_name || ''
+    editState.form.genre_id = track.genre_id || ''
     editState.form.bpm = track.bpm || null
     editState.form.initial_key = track.initial_key || ''
     editState.form.beat_grid_offset = track.beat_grid_offset || null
@@ -107,7 +109,7 @@ export const useTrackEdit = (onSaveComplete: () => void) => {
         title: editState.form.title,
         artist: editState.form.artist || undefined,
         album: editState.form.album || undefined,
-        genre: editState.form.genre || undefined,
+        genre_id: editState.form.genre_id || undefined,
         bpm: editState.form.bpm || null,
         initial_key: editState.form.initial_key || undefined,
         beat_grid_offset: editState.form.beat_grid_offset || null,
@@ -136,7 +138,7 @@ export const useTrackEdit = (onSaveComplete: () => void) => {
     }
   }
 
-  const quickSetDate = async (trackId: string, date: string, album?: string, genre?: string) => {
+  const quickSetDate = async (trackId: string, date: string, album?: string) => {
     try {
       // Handle partial dates
       let dateVal = date
@@ -148,7 +150,6 @@ export const useTrackEdit = (onSaveComplete: () => void) => {
         release_date: isoDate
       }
       if (album) updateData.album = album
-      if (genre) updateData.genre = genre
 
       await musicAPI.updateMusicFile(trackId, updateData)
       onSaveComplete()

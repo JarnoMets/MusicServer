@@ -92,7 +92,7 @@
                   <span class="track-title">{{ track.title }}</span>
                   <span class="track-album">{{ track.album || 'Unknown Album' }}</span>
                 </div>
-                <span class="track-genre">{{ track.genre || track.guessed_genre || '&mdash;' }}</span>
+                <span class="track-genre">{{ track.genre_name || '&mdash;' }}</span>
                 <span class="track-duration">{{ formatDuration(track.duration) }}</span>
               </div>
             </div>
@@ -118,7 +118,7 @@
                   <span class="track-title">{{ track.title }}</span>
                   <span class="track-artist">{{ track.artist || 'Unknown Artist' }}</span>
                 </div>
-                <span class="track-genre">{{ track.genre || track.guessed_genre || '&mdash;' }}</span>
+                <span class="track-genre">{{ track.genre_name || '&mdash;' }}</span>
                 <span class="track-duration">{{ formatDuration(track.duration) }}</span>
               </div>
             </div>
@@ -144,7 +144,7 @@
                   <span class="track-title">{{ track.title }}</span>
                   <span class="track-artist">{{ track.artist || 'Unknown Artist' }}</span>
                 </div>
-                <span class="track-genre">{{ track.genre || track.guessed_genre || '&mdash;' }}</span>
+                <span class="track-genre">{{ track.genre_name || '&mdash;' }}</span>
                 <span class="track-duration">{{ formatDuration(track.duration) }}</span>
               </div>
             </div>
@@ -385,6 +385,7 @@
       @update:artist="v => editState.form.artist = v"
       @update:album="v => editState.form.album = v"
       @update:genre="v => editState.form.genre = v"
+      @update:genre-id="v => editState.form.genre_id = v"
       @update:release_date="v => editState.form.release_date = v"
       @apply-suggestion="applySuggestedReleaseDate"
       @save="saveEdit"
@@ -673,21 +674,30 @@ const closeGenreEditor = () => {
 
 const saveArtistGenre = async () => {
   if (!selectedArtist.value || !genreInput.value.trim()) return
-  
+
+  // Look up the genre_id from the canonical genres list
+  const matchedGenre = canonicalGenres.value.find(
+    g => g.name.toLowerCase() === genreInput.value.trim().toLowerCase()
+  )
+  if (!matchedGenre) {
+    error('Genre not found', `"${genreInput.value.trim()}" is not a canonical genre. Please select from the list.`)
+    return
+  }
+
   savingGenre.value = true
   try {
-    await musicAPI.setArtistGenre(selectedArtist.value.name, genreInput.value.trim())
-    
+    await musicAPI.setArtistGenre(selectedArtist.value.name, matchedGenre.id)
+
     // Update local state
-    selectedArtist.value.genre = genreInput.value.trim()
-    
+    selectedArtist.value.genre = matchedGenre.name
+
     // Update in the store's artists list too
     const idx = store.artists.findIndex(a => a.name === selectedArtist.value?.name)
     if (idx !== -1) {
-      store.artists[idx].genre = genreInput.value.trim()
+      store.artists[idx].genre = matchedGenre.name
     }
-    
-    success('Genre updated', `Genre set to "${genreInput.value.trim()}" for ${selectedArtist.value.name}`)
+
+    success('Genre updated', `Genre set to "${matchedGenre.name}" for ${selectedArtist.value.name}`)
     closeGenreEditor()
   } catch (err: any) {
     console.error('Error saving genre:', err)

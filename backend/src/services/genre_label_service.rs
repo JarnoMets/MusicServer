@@ -1,6 +1,5 @@
 use crate::db::Database;
 use crate::models::genre::{Genre, GenreWithAliases};
-use std::collections::HashMap;
 use strsim::normalized_levenshtein;
 use uuid::Uuid;
 
@@ -10,10 +9,10 @@ pub struct GenreLabelService;
 /// Genre with track count for display
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct GenreWithCount {
+    pub id: Uuid,
     pub name: String,
-    pub track_count: i64,
-    pub id: Option<Uuid>,
     pub description: Option<String>,
+    pub track_count: i64,
 }
 
 /// List all canonical genres
@@ -25,100 +24,128 @@ pub async fn list_genres(db: &Database) -> Result<Vec<Genre>, sqlx::Error> {
     .await
 }
 
-/// Resolve a genre (canonical or alias) to its canonical name
-/// Returns the canonical genre name if found, otherwise None
-pub async fn resolve_to_canonical(
-    db: &Database,
-    genre_name: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    let lower_name = genre_name.to_lowercase();
-
-    // Check if it's an alias
-    if let Some(canonical) = sqlx::query_scalar::<_, String>(
-        "SELECT g.name FROM genre_aliases a JOIN genres g ON a.genre_id = g.id WHERE LOWER(a.alias) = $1"
+/// List genres from actual music files with track counts (FK-based, no alias resolution needed)
+pub async fn list_genres_with_counts(db: &Database) -> Result<Vec<GenreWithCount>, sqlx::Error> {
+    sqlx::query_as::<_, GenreWithCount>(
+        r#"
+        SELECT g.id, g.name, g.description, COUNT(mf.id)::int8 as track_count
+        FROM genres g
+        INNER JOIN music_files mf ON mf.genre_id = g.id
+        GROUP BY g.id
+        HAVING COUNT(mf.id) > 0
+        ORDER BY track_count DESC, g.name ASC
+        "#,
     )
-    .bind(&lower_name)
+    .fetch_all(&db.pool)
+    .await
+}
+
+/// Resolve a raw tag/name to its canonical genre_id.
+/// Returns Some(id) if matched via direct name or alias, None otherwise.
+pub async fn resolve_to_genre_id(
+    db: &Database,
+    raw: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    let lower = raw.trim().to_lowercase();
+
+    // Check alias first
+    if let Some(id) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT genre_id FROM genre_aliases WHERE LOWER(alias) = $1",
+    )
+    .bind(&lower)
     .fetch_optional(&db.pool)
     .await?
     {
-        return Ok(Some(canonical));
+        return Ok(Some(id));
     }
 
-    // Check if it's already a canonical genre
-    if let Some(canonical) = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM genres WHERE LOWER(name) = $1"
+    // Check canonical genre name
+    if let Some(id) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM genres WHERE LOWER(name) = $1",
     )
-    .bind(&lower_name)
+    .bind(&lower)
     .fetch_optional(&db.pool)
     .await?
     {
-        return Ok(Some(canonical));
+        return Ok(Some(id));
     }
 
     Ok(None)
 }
 
-/// List genres from actual music files with track counts
-/// This combines genre and guessed_genre columns, preferring genre when set
-/// It also joins with the genres table to get canonical IDs and descriptions
-/// Aliases are resolved to their canonical genre names and aggregated
-pub async fn list_genres_with_counts(db: &Database) -> Result<Vec<GenreWithCount>, sqlx::Error> {
-    // 1. Get raw stats from DB
-    let raw_counts: Vec<(String, i64)> = sqlx::query_as(
-        r#"
-        SELECT 
-            COALESCE(NULLIF(genre, ''), guessed_genre) as raw_name,
-            COUNT(*)::int8 as track_count
-        FROM music_files
-        WHERE (genre IS NOT NULL AND genre != '') 
-           OR (guessed_genre IS NOT NULL AND guessed_genre != '')
-        GROUP BY raw_name
-        "#
+/// Resolve a raw tag to genre_id; creates a new canonical genre if no match found.
+/// Used by the detection pipeline so unrecognised API tags end up in the taxonomy.
+pub async fn resolve_or_create_genre_id(
+    db: &Database,
+    raw: &str,
+) -> Result<Uuid, sqlx::Error> {
+    if let Some(id) = resolve_to_genre_id(db, raw).await? {
+        return Ok(id);
+    }
+
+    // Create a new canonical genre from this raw tag
+    let trimmed = raw.trim();
+    let id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    sqlx::query(
+        "INSERT INTO genres (id, name, created_at, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING",
     )
-    .fetch_all(&db.pool)
+    .bind(id)
+    .bind(trimmed)
+    .bind(now)
+    .bind(now)
+    .execute(&db.pool)
     .await?;
 
-    // 2. Load resolution map
-    let resolver_map = get_genre_resolver_map(db).await?;
-    
-    // 3. Aggregate by resolved canonical name
-    let mut resolved_stats: HashMap<String, GenreWithCount> = HashMap::new();
-    
-    for (raw_name, count) in raw_counts {
-        let resolved_name = resolve_genre_name(&raw_name, &resolver_map);
-        
-        let entry = resolved_stats.entry(resolved_name.clone()).or_insert_with(|| GenreWithCount {
-            name: resolved_name,
-            track_count: 0,
-            id: None,
-            description: None,
-        });
-        entry.track_count += count;
-    }
+    // Re-fetch in case of conflict
+    let actual_id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM genres WHERE LOWER(name) = LOWER($1)")
+        .bind(trimmed)
+        .fetch_one(&db.pool)
+        .await?;
 
-    // 4. Fill in canonical details (ID, description) from DB for matches
-    let mut result_list: Vec<GenreWithCount> = resolved_stats.into_values().collect();
-    
-    let canonical_genres = list_genres(db).await?;
-    let canonical_map: HashMap<String, (Uuid, Option<String>)> = canonical_genres
-        .into_iter()
-        .map(|g| (g.name.clone(), (g.id, g.description)))
-        .collect();
+    Ok(actual_id)
+}
 
-    for genre in &mut result_list {
-        if let Some((id, desc)) = canonical_map.get(&genre.name) {
-            genre.id = Some(*id);
-            genre.description = desc.clone();
-        }
-    }
+/// Assign a canonical genre to a track — the single authoritative write path.
+pub async fn assign_genre_to_track(
+    db: &Database,
+    track_id: Uuid,
+    genre_id: Uuid,
+    source: &str, // 'user', 'auto', or 'file_tag'
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE music_files SET genre_id = $1, genre_source = $2, updated_at = NOW() WHERE id = $3",
+    )
+    .bind(genre_id)
+    .bind(source)
+    .bind(track_id)
+    .execute(&db.pool)
+    .await?;
+    Ok(())
+}
 
-    // 5. Final filter: only return genres with at least one track
-    result_list.retain(|g| g.track_count > 0);
+/// Set the genre_id for all tracks by an artist (used when artist genre is set manually)
+pub async fn assign_genre_to_artist_tracks(
+    db: &Database,
+    artist_name: &str,
+    genre_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE music_files SET genre_id = $1, genre_source = 'auto', updated_at = NOW() WHERE LOWER(artist) = LOWER($2) AND (genre_source IS NULL OR genre_source = 'auto')",
+    )
+    .bind(genre_id)
+    .bind(artist_name)
+    .execute(&db.pool)
+    .await?;
+    Ok(result.rows_affected())
+}
 
-    // 6. Final sort by count
-    result_list.sort_by(|a, b| b.track_count.cmp(&a.track_count).then(a.name.cmp(&b.name)));
-
-    Ok(result_list)
+/// Get the genre_id to use for filtering (resolves name or alias → id)
+pub async fn get_genre_id_for_filter(
+    db: &Database,
+    genre_name: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    resolve_to_genre_id(db, genre_name).await
 }
 
 /// Create a new canonical genre
@@ -131,7 +158,7 @@ pub async fn create_genre(
     let now = chrono::Utc::now();
 
     sqlx::query(
-        "INSERT INTO genres (id, name, description, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)"
+        "INSERT INTO genres (id, name, description, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(name)
@@ -150,20 +177,6 @@ pub async fn create_genre(
     })
 }
 
-/// Add an alias mapping raw tag -> canonical genre
-pub async fn add_alias(db: &Database, alias: &str, genre_id: Uuid) -> Result<(), sqlx::Error> {
-    let id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO genre_aliases (id, alias, genre_id, created_at) VALUES ($1, $2, $3, NOW())",
-    )
-    .bind(id)
-    .bind(alias)
-    .bind(genre_id)
-    .execute(&db.pool)
-    .await?;
-    Ok(())
-}
-
 /// Update a canonical genre
 pub async fn update_genre(
     db: &Database,
@@ -173,7 +186,7 @@ pub async fn update_genre(
 ) -> Result<Option<Genre>, sqlx::Error> {
     let now = chrono::Utc::now();
     let result = sqlx::query(
-        "UPDATE genres SET name = $1, description = $2, updated_at = $3 WHERE id = $4"
+        "UPDATE genres SET name = $1, description = $2, updated_at = $3 WHERE id = $4",
     )
     .bind(name)
     .bind(description)
@@ -190,7 +203,7 @@ pub async fn update_genre(
         id,
         name: name.to_string(),
         description: description.map(|s| s.to_string()),
-        created_at: now, // This is technically inaccurate but Genre struct doesn't have all fields correctly in this return
+        created_at: now,
         updated_at: now,
     }))
 }
@@ -204,50 +217,36 @@ pub async fn delete_genre(db: &Database, id: Uuid) -> Result<bool, sqlx::Error> 
     Ok(result.rows_affected() > 0)
 }
 
-/// Resolve a raw genre/tag to a canonical genre name if possible
-pub async fn canonicalize(db: &Database, raw: &str) -> Result<Option<String>, sqlx::Error> {
-    let raw_lower = raw.trim().to_lowercase();
-
-    // Direct alias match against the database
-    if let Some(genre_name) = sqlx::query_scalar::<_, String>(
-        "SELECT g.name FROM genre_aliases a JOIN genres g ON a.genre_id = g.id WHERE lower(a.alias) = lower($1)"
-    ).bind(&raw_lower).fetch_optional(&db.pool).await? {
-        return Ok(Some(genre_name));
-    }
-
-    // Try matching genre name directly
-    if let Some(genre_name) =
-        sqlx::query_scalar::<_, String>("SELECT name FROM genres WHERE lower(name) = lower($1)")
-            .bind(&raw_lower)
-            .fetch_optional(&db.pool)
-            .await?
-    {
-        return Ok(Some(genre_name));
-    }
-
-    Ok(None)
+/// Add an alias mapping raw tag → canonical genre
+pub async fn add_alias(db: &Database, alias: &str, genre_id: Uuid) -> Result<(), sqlx::Error> {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO genre_aliases (id, alias, genre_id, created_at) VALUES ($1, $2, $3, NOW())",
+    )
+    .bind(id)
+    .bind(alias)
+    .bind(genre_id)
+    .execute(&db.pool)
+    .await?;
+    Ok(())
 }
 
-// Expose a small normalization helper for unit testing
-#[allow(dead_code)]
-pub fn normalize_str(raw: &str) -> String {
-    // Only basic trimming for external uses, real normalization is via canonicalize() or resolve_genre_name()
-    raw.trim().to_string()
-}
-
-// Unit tests moved to end of file to satisfy clippy `items_after_test_module` lint
-
-/// List detected genres/tags that currently have no mapping (for UIs to present)
+/// List raw detected tags from artist_genres that have no canonical genre mapping yet
 pub async fn list_unmapped_tags(db: &Database, limit: i64) -> Result<Vec<String>, sqlx::Error> {
-    // naive approach: look at artist_genres (cached detected values) and return those without mapping
-    let rows = sqlx::query_scalar::<_, String>(
-        "SELECT DISTINCT genre FROM artist_genres WHERE genre IS NOT NULL AND NOT EXISTS (SELECT 1 FROM genre_aliases a JOIN genres g ON a.genre_id = g.id WHERE lower(a.alias) = lower(artist_genres.genre) OR lower(g.name) = lower(artist_genres.genre)) LIMIT $1"
+    sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT DISTINCT raw_detected_tag
+        FROM artist_genres
+        WHERE raw_detected_tag IS NOT NULL
+          AND genre_id IS NULL
+          AND detection_status != 'not_found'
+        ORDER BY raw_detected_tag ASC
+        LIMIT $1
+        "#,
     )
     .bind(limit)
     .fetch_all(&db.pool)
-    .await?;
-
-    Ok(rows)
+    .await
 }
 
 /// Suggest similar canonical genres or aliases for a raw tag using fuzzy matching
@@ -258,18 +257,14 @@ pub async fn suggest_similar(
 ) -> Result<Vec<(String, f64)>, sqlx::Error> {
     let cleaned = raw.trim().to_lowercase();
 
-    // Collect candidate names: genres and aliases
-    let mut candidates: Vec<String> = Vec::new();
-    let genre_names = sqlx::query_scalar::<_, String>("SELECT name FROM genres")
+    let mut candidates: Vec<String> = sqlx::query_scalar::<_, String>("SELECT name FROM genres")
         .fetch_all(&db.pool)
         .await?;
-    candidates.extend(genre_names);
-    let alias_names = sqlx::query_scalar::<_, String>("SELECT alias FROM genre_aliases")
+    let aliases = sqlx::query_scalar::<_, String>("SELECT alias FROM genre_aliases")
         .fetch_all(&db.pool)
         .await?;
-    candidates.extend(alias_names);
+    candidates.extend(aliases);
 
-    // Score and sort
     let mut scored: Vec<(String, f64)> = candidates
         .into_iter()
         .map(|c| {
@@ -279,128 +274,126 @@ pub async fn suggest_similar(
         .collect();
 
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.retain(|(_, score)| *score >= 0.4);
     scored.truncate(limit);
     Ok(scored)
 }
 
-/// When an alias is added (alias -> genre), backfill existing rows so guessed_genre and artist_genres are updated
-pub async fn backfill_alias(
+/// Preview how many rows would be affected by backfilling an alias to a genre
+pub async fn preview_backfill(
     db: &Database,
     alias: &str,
-    canonical: &str,
-) -> Result<u64, sqlx::Error> {
-    // 1. Update music_files confirmed genre where matches alias (case-insensitive)
-    let confirmed_result = sqlx::query("UPDATE music_files SET genre = $1, updated_at = NOW() WHERE lower(genre) = lower($2)")
-        .bind(canonical)
-        .bind(alias)
-        .execute(&db.pool)
-        .await?;
-
-    // 2. Update music_files guessed_genre where matches alias (case-insensitive)
-    let guessed_result = sqlx::query("UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE lower(guessed_genre) = lower($2)")
-        .bind(canonical)
-        .bind(alias)
-        .execute(&db.pool)
-        .await?;
-
-    // 3. Update artist_genres (cache) as well
-    let _ = sqlx::query(
-        "UPDATE artist_genres SET genre = $1, last_updated = NOW() WHERE lower(genre) = lower($2)",
-    )
-    .bind(canonical)
-    .bind(alias)
-    .execute(&db.pool)
-    .await?;
-
-    Ok(confirmed_result.rows_affected() + guessed_result.rows_affected())
-}
-
-/// Preview how many rows would be affected by backfilling an alias to a canonical genre
-pub async fn preview_backfill(db: &Database, alias: &str) -> Result<(i64, i64), sqlx::Error> {
-    // Count music_files rows where either genre or guessed_genre matches alias (case-insensitive)
-    let music_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM music_files WHERE (guessed_genre IS NOT NULL AND lower(guessed_genre) = lower($1)) OR (genre IS NOT NULL AND lower(genre) = lower($1))"
+    target_genre_id: Uuid,
+) -> Result<(i64, i64), sqlx::Error> {
+    // Tracks that currently have no genre_id or a different genre_id and whose
+    // raw tag (old genre/guessed_genre text, now gone) matched the alias.
+    // Since we've migrated, preview instead counts how many existing artist_genres
+    // have raw_detected_tag matching the alias but no genre_id assigned.
+    let artist_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM artist_genres WHERE LOWER(raw_detected_tag) = LOWER($1) AND genre_id IS NULL",
     )
     .bind(alias)
     .fetch_one(&db.pool)
     .await?;
 
-    // Count artist_genres entries where genre matches alias
-    let artist_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM artist_genres WHERE genre IS NOT NULL AND lower(genre) = lower($1)",
+    // Tracks that would be updated: those where artist has matching raw tag but no genre_id
+    let music_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM music_files mf
+        JOIN artist_genres ag ON LOWER(mf.artist) = LOWER(ag.artist_name)
+        WHERE LOWER(ag.raw_detected_tag) = LOWER($1)
+          AND ag.genre_id IS NULL
+          AND (mf.genre_id IS NULL OR mf.genre_id != $2)
+        "#,
     )
     .bind(alias)
+    .bind(target_genre_id)
     .fetch_one(&db.pool)
     .await?;
 
     Ok((music_count, artist_count))
 }
 
-// unit tests are placed at the end of the file to satisfy clippy's
-// `items_after_test_module` lint
+/// When an alias is added, backfill: update artist_genres and their tracks where the raw_detected_tag matches
+pub async fn backfill_alias(
+    db: &Database,
+    alias: &str,
+    canonical_genre_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    // 1. Update artist_genres where raw_detected_tag matches the alias
+    let artist_result = sqlx::query(
+        "UPDATE artist_genres SET genre_id = $1, detection_status = 'detected', last_updated = NOW() WHERE LOWER(raw_detected_tag) = LOWER($2) AND genre_id IS NULL",
+    )
+    .bind(canonical_genre_id)
+    .bind(alias)
+    .execute(&db.pool)
+    .await?;
+
+    // 2. Update tracks for those artists that still have no user-confirmed genre
+    let track_result = sqlx::query(
+        r#"
+        UPDATE music_files mf
+        SET genre_id = $1, genre_source = 'auto', updated_at = NOW()
+        FROM artist_genres ag
+        WHERE LOWER(ag.artist_name) = LOWER(mf.artist)
+          AND ag.genre_id = $1
+          AND (mf.genre_id IS NULL OR mf.genre_source = 'auto')
+        "#,
+    )
+    .bind(canonical_genre_id)
+    .execute(&db.pool)
+    .await?;
+
+    Ok(artist_result.rows_affected() + track_result.rows_affected())
+}
 
 /// Merge one genre into another. All tracks and aliases will be moved to the target genre.
 pub async fn merge_genres(db: &Database, source_id: Uuid, target_id: Uuid) -> Result<(), sqlx::Error> {
-    // Get genre names
-    let source: (String,) = sqlx::query_as("SELECT name FROM genres WHERE id = $1")
-        .bind(source_id)
-        .fetch_one(&db.pool)
-        .await?;
-    let target: (String,) = sqlx::query_as("SELECT name FROM genres WHERE id = $1")
-        .bind(target_id)
-        .fetch_one(&db.pool)
-        .await?;
-
-    let source_name = source.0;
-    let target_name = target.0;
-
     let mut tx = db.pool.begin().await?;
 
-    // 1. Update confirmation status in music_files
-    sqlx::query("UPDATE music_files SET genre = $1 WHERE genre = $2")
-        .bind(&target_name)
-        .bind(&source_name)
-        .execute(&mut *tx)
-        .await?;
-
-    // 2. Update guessed_genre in music_files
-    sqlx::query("UPDATE music_files SET guessed_genre = $1 WHERE guessed_genre = $2")
-        .bind(&target_name)
-        .bind(&source_name)
-        .execute(&mut *tx)
-        .await?;
-
-    // 3. Update artist_genres (cache)
-    sqlx::query("UPDATE artist_genres SET genre = $1 WHERE genre = $2")
-        .bind(&target_name)
-        .bind(&source_name)
-        .execute(&mut *tx)
-        .await?;
-
-    // 4. Move aliases, handling conflicts
-    // We try to update aliases from source to target. If an alias already exists for target, we delete it from source.
-    let aliases: Vec<String> = sqlx::query_scalar("SELECT alias FROM genre_aliases WHERE genre_id = $1")
+    // 1. Move all tracks from source to target
+    sqlx::query("UPDATE music_files SET genre_id = $1, updated_at = NOW() WHERE genre_id = $2")
+        .bind(target_id)
         .bind(source_id)
-        .fetch_all(&mut *tx)
+        .execute(&mut *tx)
+        .await?;
+
+    // 2. Move artist_genres from source to target
+    sqlx::query("UPDATE artist_genres SET genre_id = $1, last_updated = NOW() WHERE genre_id = $2")
+        .bind(target_id)
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 3. Move aliases, handling conflicts
+    let aliases: Vec<String> = sqlx::query_scalar(
+        "SELECT alias FROM genre_aliases WHERE genre_id = $1",
+    )
+    .bind(source_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let target_name: String = sqlx::query_scalar("SELECT name FROM genres WHERE id = $1")
+        .bind(target_id)
+        .fetch_one(&mut *tx)
         .await?;
 
     for alias in aliases {
-        // Check if target already has this alias or if the target name itself is this alias
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM genre_aliases WHERE alias = $1 AND genre_id = $2)")
-            .bind(&alias)
-            .bind(target_id)
-            .fetch_one(&mut *tx)
-            .await?;
-        
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM genre_aliases WHERE LOWER(alias) = LOWER($1) AND genre_id = $2)",
+        )
+        .bind(&alias)
+        .bind(target_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
         if exists || alias.to_lowercase() == target_name.to_lowercase() {
-            // Conflict, just delete the source alias
             sqlx::query("DELETE FROM genre_aliases WHERE alias = $1 AND genre_id = $2")
                 .bind(&alias)
                 .bind(source_id)
                 .execute(&mut *tx)
                 .await?;
         } else {
-            // Move it
             sqlx::query("UPDATE genre_aliases SET genre_id = $1 WHERE alias = $2 AND genre_id = $3")
                 .bind(target_id)
                 .bind(&alias)
@@ -410,7 +403,7 @@ pub async fn merge_genres(db: &Database, source_id: Uuid, target_id: Uuid) -> Re
         }
     }
 
-    // 5. Delete the source genre
+    // 4. Delete the source genre
     sqlx::query("DELETE FROM genres WHERE id = $1")
         .bind(source_id)
         .execute(&mut *tx)
@@ -427,24 +420,15 @@ pub async fn list_genres_extended(db: &Database) -> Result<Vec<GenreWithAliases>
 
     for genre in genres {
         let aliases: Vec<String> = sqlx::query_scalar(
-            "SELECT alias FROM genre_aliases WHERE genre_id = $1 ORDER BY alias ASC"
+            "SELECT alias FROM genre_aliases WHERE genre_id = $1 ORDER BY alias ASC",
         )
         .bind(genre.id)
         .fetch_all(&db.pool)
         .await?;
 
-        // track count: include all tracks matching this canonical genre or its aliases
         let track_count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*) FROM music_files 
-            WHERE 
-                LOWER(COALESCE(NULLIF(genre, ''), guessed_genre)) = LOWER($1)
-                OR LOWER(COALESCE(NULLIF(genre, ''), guessed_genre)) IN (
-                    SELECT LOWER(alias) FROM genre_aliases WHERE genre_id = $2
-                )
-            "#
+            "SELECT COUNT(*) FROM music_files WHERE genre_id = $1",
         )
-        .bind(&genre.name)
         .bind(genre.id)
         .fetch_one(&db.pool)
         .await?;
@@ -463,46 +447,7 @@ pub async fn list_genres_extended(db: &Database) -> Result<Vec<GenreWithAliases>
     Ok(result)
 }
 
-/// Get a map of raw genre names to their canonicalized versions
-pub async fn get_genre_resolver_map(db: &Database) -> Result<HashMap<String, String>, sqlx::Error> {
-    let mut map = HashMap::new();
-
-    // 1. Map canonical genre names to themselves (lower-case index)
-    let genres = list_genres(db).await?;
-    for g in &genres {
-        map.insert(g.name.to_lowercase(), g.name.clone());
-    }
-
-    // 2. Map aliases to their canonical names
-    let aliases: Vec<(String, String)> = sqlx::query_as(
-        "SELECT LOWER(a.alias), g.name FROM genre_aliases a JOIN genres g ON a.genre_id = g.id"
-    )
-    .fetch_all(&db.pool)
-    .await?;
-
-    for (alias, canonical) in aliases {
-        map.insert(alias, canonical);
-    }
-
-    Ok(map)
-}
-
-/// Helper to resolve a name using the provided map
-pub fn resolve_genre_name(name: &str, resolver_map: &HashMap<String, String>) -> String {
-    let lower = name.to_lowercase();
-    
-    // Direct match in map (canonical or alias)
-    if let Some(canonical) = resolver_map.get(&lower) {
-        return canonical.clone();
-    }
-
-    // Return the name as is if no mapping exists
-    name.to_string()
-}
-
-// unit tests are placed at the end of the file to satisfy clippy's
-// `items_after_test_module` lint
-
+// unit tests
 #[cfg(test)]
 mod tests {
     use super::GenreLabelService;

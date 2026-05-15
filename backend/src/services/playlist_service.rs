@@ -144,9 +144,10 @@ pub async fn get_playlist_with_items(
 ) -> Result<Option<PlaylistWithItems>, sqlx::Error> {
     if let Some(playlist) = get_playlist(db, id).await? {
         let items = sqlx::query_as::<_, crate::models::MusicFile>(
-            "SELECT mf.id, mf.title, mf.artist, mf.album, mf.genre, mf.guessed_genre, mf.release_date, mf.duration, mf.file_path, mf.track_number, mf.file_hash, mf.bpm, mf.initial_key, mf.beat_grid_offset, mf.beat_map, mf.metadata_analyzed, mf.created_at, mf.updated_at
+            "SELECT mf.id, mf.title, mf.artist, mf.album, mf.genre_id, g.name as genre_name, mf.genre_source, mf.release_date, mf.duration, mf.file_path, mf.track_number, mf.file_hash, mf.bpm, mf.initial_key, mf.beat_grid_offset, mf.beat_map, mf.metadata_analyzed, mf.created_at, mf.updated_at
              FROM playlist_items pi
              JOIN music_files mf ON mf.id = pi.music_file_id
+             LEFT JOIN genres g ON mf.genre_id = g.id
              WHERE pi.playlist_id = $1
              ORDER BY pi.position ASC",
         )

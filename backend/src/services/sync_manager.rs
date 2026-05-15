@@ -102,7 +102,7 @@ async fn insert_batch(db: &Database, rows: &[FileRow]) -> Result<u32, sqlx::Erro
 
     use sqlx::{Postgres, QueryBuilder};
     let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO music_files (id, title, artist, album, genre, guessed_genre, release_date, duration, file_path, created_at, updated_at, track_number) "
+        "INSERT INTO music_files (id, title, artist, album, genre_id, genre_source, release_date, duration, file_path, created_at, updated_at, track_number) "
     );
     
     let now = chrono::Utc::now();
@@ -130,24 +130,15 @@ fn spawn_genre_detection(db: Database, rows: Vec<FileRow>) {
     for row in rows {
         if let Some(artist_name) = row.artist {
             let db_clone = db.clone();
-            let file_path = row.file_path;
+            let artist_name_clone = artist_name.clone();
             tokio::spawn(async move {
                 // Check cache first
-                if let Ok(Some(cached)) = crate::services::genre_cache_service::get_cached_genre(&db_clone, &artist_name).await {
-                    let _ = sqlx::query("UPDATE music_files SET guessed_genre = $1 WHERE file_path = $2")
-                        .bind(&cached)
-                        .bind(&file_path)
-                        .execute(&db_clone.pool)
-                        .await;
+                if let Ok(Some(genre_id)) = crate::services::genre_cache_service::get_cached_genre_id(&db_clone, &artist_name_clone).await {
+                    let _ = crate::services::genre_label_service::assign_genre_to_artist_tracks(&db_clone, &artist_name_clone, genre_id).await;
                 } else {
-                    // Detect and cache
-                    let _ = crate::services::genre_detection::detect_genre_for_artist(&db_clone, artist_name.clone()).await;
-                    if let Ok(Some(detected)) = crate::services::genre_cache_service::get_cached_genre(&db_clone, &artist_name).await {
-                        let _ = sqlx::query("UPDATE music_files SET guessed_genre = $1 WHERE file_path = $2")
-                            .bind(&detected)
-                            .bind(&file_path)
-                            .execute(&db_clone.pool)
-                            .await;
+                    // Detect and propagate
+                    if let Ok(Some(genre_id)) = crate::services::genre_detection::detect_genre_for_artist(&db_clone, artist_name_clone.clone()).await {
+                        let _ = crate::services::genre_label_service::assign_genre_to_artist_tracks(&db_clone, &artist_name_clone, genre_id).await;
                     }
                 }
             });

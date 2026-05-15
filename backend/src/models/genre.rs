@@ -6,7 +6,10 @@ use uuid::Uuid;
 pub struct ArtistGenre {
     pub id: Uuid,
     pub artist_name: String,
-    pub genre: String,
+    pub genre_id: Option<Uuid>,
+    pub genre_name: Option<String>,
+    pub raw_detected_tag: Option<String>,
+    pub detection_status: String,
     pub last_updated: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }
@@ -47,6 +50,7 @@ pub struct DetectGenreRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DetectGenreResponse {
     pub artist_name: String,
-    pub genre: Option<String>,
+    pub genre_id: Option<Uuid>,
+    pub genre_name: Option<String>,
     pub cached: bool,
 }

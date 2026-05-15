@@ -8,8 +8,9 @@ pub struct MusicFile {
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
-    pub genre: Option<String>,
-    pub guessed_genre: Option<String>,
+    pub genre_id: Option<Uuid>,
+    pub genre_name: Option<String>,
+    pub genre_source: Option<String>,
     pub release_date: Option<DateTime<Utc>>,
     pub duration: Option<i32>,
     pub file_path: String,
@@ -29,8 +30,8 @@ pub struct CreateMusicFileRequest {
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
-    pub genre: Option<String>,
-    pub guessed_genre: Option<String>,
+    pub genre_id: Option<Uuid>,
+    pub genre_source: Option<String>,
     pub release_date: Option<DateTime<Utc>>,
     pub duration: Option<i32>,
     pub file_path: String,
@@ -48,8 +49,8 @@ pub struct UpdateMusicFileRequest {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
-    pub genre: Option<String>,
-    pub guessed_genre: Option<String>,
+    pub genre_id: Option<Uuid>,
+    pub genre_source: Option<String>,
     pub release_date: Option<DateTime<Utc>>,
     pub duration: Option<i32>,
     pub track_number: Option<i32>,
@@ -69,7 +70,7 @@ pub struct MusicQueryParams {
     pub order: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
-    /// Filter to only show unconfirmed genres (guessed_genre set but genre not set)
+    /// Filter to only show auto-detected genres (genre_source = 'auto')
     pub unconfirmed_only: Option<bool>,
     /// Filter to only show music missing metadata (genre or release_date or album)
     pub missing_metadata: Option<bool>,
@@ -122,7 +123,7 @@ pub struct BulkAddToPlaylistResponse {
 #[derive(serde::Deserialize)]
 pub struct BulkUpdateMusicRequest {
     pub ids: Vec<Uuid>,
-    pub genre: Option<String>,
+    pub genre_id: Option<Uuid>,
     pub artist: Option<String>,
     pub album: Option<String>,
     pub release_date: Option<DateTime<Utc>>,

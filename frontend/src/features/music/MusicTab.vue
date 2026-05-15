@@ -209,7 +209,7 @@ const handleLookupDate = (track: MusicFile) => {
 const handleApplyDate = async (track: MusicFile, date: string) => {
   const suggestion = releaseDateSuggestion.value
   if (suggestion && suggestion.date === date) {
-    await quickSetDate(track.id, date, suggestion.album, suggestion.genre)
+    await quickSetDate(track.id, date, suggestion.album)
   } else {
     await quickSetDate(track.id, date)
   }
@@ -227,12 +227,12 @@ const handleBulkPlaylistAdd = async (trackIds: string[], playlistId: string) => 
   }
 }
 
-const handleBulkSetGenre = async (tracks: MusicFile[], genre: string) => {
+const handleBulkSetGenre = async (tracks: MusicFile[], genre_id: string) => {
   if (canManage()) {
     try {
       await musicAPI.bulkUpdateMusic({
         ids: tracks.map(t => t.id),
-        genre
+        genre_id
       })
       fetchMusic()
     } catch (e) {
@@ -287,6 +287,9 @@ const handleEditFormUpdate = {
   },
   genre: (val: string) => {
     editState.form.genre = val
+  },
+  'genre-id': (val: string) => {
+    editState.form.genre_id = val
   },
   release_date: (val: string) => {
     editState.form.release_date = val
@@ -377,6 +380,7 @@ const handleEditFormUpdate = {
       @update:artist="handleEditFormUpdate.artist"
       @update:album="handleEditFormUpdate.album"
       @update:genre="handleEditFormUpdate.genre"
+      @update:genre-id="handleEditFormUpdate['genre-id']"
       @update:release_date="handleEditFormUpdate.release_date"
       @update:bpm="handleEditFormUpdate.bpm"
       @update:initial_key="handleEditFormUpdate.initial_key"

@@ -35,6 +35,8 @@ pub async fn run_migrations(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
     migration_24_beat_map(pool).await?;
     migration_25_autoplay_settings(pool).await?;
     migration_26_access_tokens(pool).await?;
+    migration_27_genre_id_columns(pool).await?;
+    migration_28_drop_genre_string_columns(pool).await?;
 
     log::info!("Database schema setup completed successfully");
     Ok(())
@@ -819,6 +821,276 @@ async fn migration_26_access_tokens(pool: &Pool<Postgres>) -> Result<(), sqlx::E
     .await?;
 
     record_migration(pool, 26, "Create access_tokens table for user-generated API tokens").await
+}
+
+async fn migration_27_genre_id_columns(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 27).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 27: Add genre_id/genre_source columns and migrate data to normalized genre system");
+
+    // 1. Add new columns to music_files
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'genre_id') THEN
+                ALTER TABLE music_files ADD COLUMN genre_id UUID REFERENCES genres(id) ON DELETE SET NULL;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'genre_source') THEN
+                ALTER TABLE music_files ADD COLUMN genre_source TEXT;
+                ALTER TABLE music_files ADD CONSTRAINT music_files_genre_source_check CHECK (genre_source IN ('user', 'auto', 'file_tag'));
+            END IF;
+        END $$;
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // 2. Add new columns to artist_genres
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artist_genres' AND column_name = 'genre_id') THEN
+                ALTER TABLE artist_genres ADD COLUMN genre_id UUID REFERENCES genres(id) ON DELETE SET NULL;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artist_genres' AND column_name = 'raw_detected_tag') THEN
+                ALTER TABLE artist_genres ADD COLUMN raw_detected_tag TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artist_genres' AND column_name = 'detection_status') THEN
+                ALTER TABLE artist_genres ADD COLUMN detection_status TEXT NOT NULL DEFAULT 'pending';
+                ALTER TABLE artist_genres ADD CONSTRAINT artist_genres_detection_status_check
+                    CHECK (detection_status IN ('pending', 'detected', 'not_found'));
+            END IF;
+            -- Make the old genre column nullable for the transition period
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artist_genres' AND column_name = 'genre') THEN
+                ALTER TABLE artist_genres ALTER COLUMN genre DROP NOT NULL;
+                ALTER TABLE artist_genres ALTER COLUMN genre SET DEFAULT NULL;
+            END IF;
+        END $$;
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // 3. Migrate music_files.genre (confirmed) → genre_id + genre_source = 'user'
+    //    Step A: match existing canonical genres
+    sqlx::query(
+        r#"
+        UPDATE music_files mf
+        SET genre_id = g.id, genre_source = 'user'
+        FROM genres g
+        WHERE LOWER(mf.genre) = LOWER(g.name)
+          AND mf.genre IS NOT NULL AND mf.genre != ''
+          AND mf.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    //    Step B: match via aliases
+    sqlx::query(
+        r#"
+        UPDATE music_files mf
+        SET genre_id = ga.genre_id, genre_source = 'user'
+        FROM genre_aliases ga
+        WHERE LOWER(mf.genre) = LOWER(ga.alias)
+          AND mf.genre IS NOT NULL AND mf.genre != ''
+          AND mf.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    //    Step C: create canonical genres for any remaining unmatched confirmed genres
+    sqlx::query(
+        r#"
+        INSERT INTO genres (id, name, created_at, updated_at)
+        SELECT DISTINCT gen_random_uuid(), mf.genre, NOW(), NOW()
+        FROM music_files mf
+        WHERE mf.genre IS NOT NULL AND mf.genre != '' AND mf.genre_id IS NULL
+        ON CONFLICT (name) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    //    Step D: now match the newly created genres
+    sqlx::query(
+        r#"
+        UPDATE music_files mf
+        SET genre_id = g.id, genre_source = 'user'
+        FROM genres g
+        WHERE LOWER(mf.genre) = LOWER(g.name)
+          AND mf.genre IS NOT NULL AND mf.genre != ''
+          AND mf.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // 4. Migrate music_files.guessed_genre (auto-detected) → genre_id + genre_source = 'auto'
+    //    Only for tracks that still have no genre_id
+    sqlx::query(
+        r#"
+        UPDATE music_files mf
+        SET genre_id = g.id, genre_source = 'auto'
+        FROM genres g
+        WHERE LOWER(mf.guessed_genre) = LOWER(g.name)
+          AND mf.guessed_genre IS NOT NULL AND mf.guessed_genre != ''
+          AND mf.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE music_files mf
+        SET genre_id = ga.genre_id, genre_source = 'auto'
+        FROM genre_aliases ga
+        WHERE LOWER(mf.guessed_genre) = LOWER(ga.alias)
+          AND mf.guessed_genre IS NOT NULL AND mf.guessed_genre != ''
+          AND mf.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO genres (id, name, created_at, updated_at)
+        SELECT DISTINCT gen_random_uuid(), mf.guessed_genre, NOW(), NOW()
+        FROM music_files mf
+        WHERE mf.guessed_genre IS NOT NULL AND mf.guessed_genre != '' AND mf.genre_id IS NULL
+        ON CONFLICT (name) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE music_files mf
+        SET genre_id = g.id, genre_source = 'auto'
+        FROM genres g
+        WHERE LOWER(mf.guessed_genre) = LOWER(g.name)
+          AND mf.guessed_genre IS NOT NULL AND mf.guessed_genre != ''
+          AND mf.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // 5. Migrate artist_genres
+    //    Mark NotFound → not_found status
+    sqlx::query(
+        r#"UPDATE artist_genres SET detection_status = 'not_found', raw_detected_tag = genre WHERE genre = 'NotFound'"#,
+    )
+    .execute(pool)
+    .await?;
+
+    //    Match detected genres to canonical genres
+    sqlx::query(
+        r#"
+        UPDATE artist_genres ag
+        SET genre_id = g.id, detection_status = 'detected', raw_detected_tag = ag.genre
+        FROM genres g
+        WHERE LOWER(ag.genre) = LOWER(g.name)
+          AND ag.genre IS NOT NULL AND ag.genre NOT IN ('Unknown', 'NotFound')
+          AND ag.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE artist_genres ag
+        SET genre_id = ga.genre_id, detection_status = 'detected', raw_detected_tag = ag.genre
+        FROM genre_aliases ga
+        WHERE LOWER(ag.genre) = LOWER(ga.alias)
+          AND ag.genre IS NOT NULL AND ag.genre NOT IN ('Unknown', 'NotFound')
+          AND ag.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO genres (id, name, created_at, updated_at)
+        SELECT DISTINCT gen_random_uuid(), ag.genre, NOW(), NOW()
+        FROM artist_genres ag
+        WHERE ag.genre IS NOT NULL AND ag.genre NOT IN ('Unknown', 'NotFound') AND ag.genre_id IS NULL
+        ON CONFLICT (name) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE artist_genres ag
+        SET genre_id = g.id, detection_status = 'detected', raw_detected_tag = ag.genre
+        FROM genres g
+        WHERE LOWER(ag.genre) = LOWER(g.name)
+          AND ag.genre IS NOT NULL AND ag.genre NOT IN ('Unknown', 'NotFound')
+          AND ag.genre_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Unknown/NULL entries stay as detection_status = 'pending' (the DEFAULT)
+
+    // 6. Add indexes for new columns
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_music_files_genre_id ON music_files(genre_id)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_artist_genres_genre_id ON artist_genres(genre_id)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_artist_genres_detection_status ON artist_genres(detection_status)",
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 27, "Add genre_id and genre_source columns (normalized genre system)").await
+}
+
+async fn migration_28_drop_genre_string_columns(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    if is_migration_applied(pool, 28).await? {
+        return Ok(());
+    }
+    log::info!("Applying migration 28: Drop legacy genre string columns");
+
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'genre') THEN
+                ALTER TABLE music_files DROP COLUMN genre;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'music_files' AND column_name = 'guessed_genre') THEN
+                ALTER TABLE music_files DROP COLUMN guessed_genre;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artist_genres' AND column_name = 'genre') THEN
+                ALTER TABLE artist_genres DROP COLUMN genre;
+            END IF;
+        END $$;
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_migration(pool, 28, "Drop legacy genre string columns").await
 }
 
 /// Fix timestamp columns for databases that were created with TIMESTAMP instead of TIMESTAMPTZ

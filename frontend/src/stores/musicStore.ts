@@ -54,9 +54,9 @@ export const useMusicStore = defineStore('music', () => {
 
     if (filters.value.genre) {
       if (filters.value.genre === 'unconfirmed') {
-        result = result.filter(f => !f.genre && f.guessed_genre)
+        result = result.filter(f => f.genre_source === 'auto')
       } else {
-        result = result.filter(f => f.genre === filters.value.genre)
+        result = result.filter(f => f.genre_name === filters.value.genre)
       }
     }
 

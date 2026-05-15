@@ -78,10 +78,10 @@ export const useTrackActions = (onActionComplete: () => void) => {
     }
   }
 
-  const setTrackGenre = async (track: MusicFile, genre: string) => {
+  const setTrackGenre = async (track: MusicFile, genre_id: string) => {
     try {
-      await musicAPI.updateMusicFile(track.id, { genre })
-      success('Genre updated', `"${track.title}" is now tagged as ${genre}`)
+      await musicAPI.updateMusicFile(track.id, { genre_id })
+      success('Genre updated', `"${track.title}" genre updated`)
       onActionComplete()
     } catch (err: unknown) {
       console.error('Failed to update genre', err)

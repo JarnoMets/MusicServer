@@ -324,7 +324,8 @@ const formatTableName = (name: string) => {
 
 const formatFieldName = (key: string) => {
   const map: Record<string, string> = {
-    'guessed_genre': 'Guessed Genre',
+    'genre_id': 'Genre',
+    'genre_source': 'Genre Source',
     'genre': 'Genre',
     'release_date': 'Release Date',
     'file_path': 'File Path',

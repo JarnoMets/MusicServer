@@ -77,7 +77,7 @@
           <div class="track-name">{{ track.title }}</div>
           <div class="track-meta">
             {{ track.artist || 'Unknown' }}
-            <span v-if="track.genre" class="track-genre-badge">{{ track.genre }}</span>
+            <span v-if="track.genre_name" class="track-genre-badge">{{ track.genre_name }}</span>
           </div>
         </div>
         <div class="track-stats">

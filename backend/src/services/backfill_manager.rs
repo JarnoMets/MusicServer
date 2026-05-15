@@ -45,15 +45,16 @@ pub async fn start_backfill(db: Database, alias: String, genre_id: uuid::Uuid) -
 
     let remove_id = session_id.clone();
     tokio::spawn(async move {
-        // Resolve canonical name
-        let canonical: Option<String> = sqlx::query_scalar("SELECT name FROM genres WHERE id = $1")
+        // Verify genre exists
+        let genre_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM genres WHERE id = $1)")
             .bind(genre_id)
             .fetch_optional(&db.pool)
             .await
             .ok()
-            .flatten();
+            .flatten()
+            .unwrap_or(false);
 
-        if canonical.is_none() {
+        if !genre_exists {
             let _ = tx.send(BackfillProgress {
                 processed: 0,
                 total: 0,
@@ -66,79 +67,22 @@ pub async fn start_backfill(db: Database, alias: String, genre_id: uuid::Uuid) -
             return;
         }
 
-        let canonical = canonical.unwrap();
-
         // Insert alias
         let _ = genre_label_service::add_alias(&db, &alias, genre_id).await;
 
-        // Count matching rows
+        // Count matching rows for progress tracking
         let (music_count, artist_count) =
-            (genre_label_service::preview_backfill(&db, &alias).await).unwrap_or((0, 0));
+            genre_label_service::preview_backfill(&db, &alias, genre_id).await.unwrap_or((0, 0));
 
         let total = (music_count + artist_count) as usize;
-        let mut processed: usize = 0;
 
-        // Backfill music_files in chunks: select ids then update in batches
-        if music_count > 0 {
-            // Include both confirmed genre and guessed_genre
-            let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM music_files WHERE (guessed_genre IS NOT NULL AND lower(guessed_genre) = lower($1)) OR (genre IS NOT NULL AND lower(genre) = lower($1))")
-                .bind(&alias)
-                .fetch_all(&db.pool)
-                .await
-                .unwrap_or_default();
-
-            let chunk_size = 200usize;
-            for chunk in ids.chunks(chunk_size) {
-                // Update both genre and guessed_genre columns
-                let _ = sqlx::query("UPDATE music_files SET guessed_genre = CASE WHEN lower(guessed_genre) = lower($1) THEN $2 ELSE guessed_genre END, genre = CASE WHEN lower(genre) = lower($1) THEN $2 ELSE genre END, updated_at = NOW() WHERE id = ANY($3)")
-                    .bind(&alias)
-                    .bind(&canonical)
-                    .bind(chunk)
-                    .execute(&db.pool)
-                    .await;
-
-                processed += chunk.len();
-                let _ = tx.send(BackfillProgress {
-                    processed,
-                    total,
-                    current: None,
-                    finished: false,
-                });
-            }
-        }
-
-        // Backfill artist_genres
-        if artist_count > 0 {
-            let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
-                "SELECT id FROM artist_genres WHERE genre IS NOT NULL AND lower(genre) = lower($1)",
-            )
-            .bind(&alias)
-            .fetch_all(&db.pool)
+        // Run the FK-based backfill (updates artist_genres + tracks in one call)
+        let affected = genre_label_service::backfill_alias(&db, &alias, genre_id)
             .await
-            .unwrap_or_default();
-
-            let chunk_size = 200usize;
-            for chunk in ids.chunks(chunk_size) {
-                let _ = sqlx::query(
-                    "UPDATE artist_genres SET genre = $1, last_updated = NOW() WHERE id = ANY($2)",
-                )
-                .bind(&canonical)
-                .bind(chunk)
-                .execute(&db.pool)
-                .await;
-
-                processed += chunk.len();
-                let _ = tx.send(BackfillProgress {
-                    processed,
-                    total,
-                    current: None,
-                    finished: false,
-                });
-            }
-        }
+            .unwrap_or(0);
 
         let _ = tx.send(BackfillProgress {
-            processed,
+            processed: affected as usize,
             total,
             current: None,
             finished: true,

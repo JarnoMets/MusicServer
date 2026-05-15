@@ -21,18 +21,18 @@ const emit = defineEmits<{
 const isLoading = ref(false)
 const error = ref<string | null>(null)
 
-const genreToConfirm = computed(() => props.track?.guessed_genre || '')
+const genreToConfirm = computed(() => props.track?.genre_name || '')
 const trackTitle = computed(() => props.track?.title || '')
 const artistName = computed(() => props.track?.artist || 'Unknown Artist')
 
 const handleConfirm = async () => {
-  if (!props.track || !genreToConfirm.value) return
+  if (!props.track || !genreToConfirm.value || !props.track.genre_id) return
 
   isLoading.value = true
   error.value = null
 
   try {
-    await musicAPI.confirmGenre(props.track.id, genreToConfirm.value)
+    await musicAPI.confirmGenre(props.track.id, props.track.genre_id)
     emit('confirm', genreToConfirm.value)
     handleClose()
   } catch (err) {

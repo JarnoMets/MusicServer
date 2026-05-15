@@ -74,8 +74,8 @@ export const musicAPI = {
       title: string
       artist: string
       album: string
-      genre: string
-      guessed_genre: string
+      genre_id: string
+      genre_source: string
       duration: number
       release_date: string
       bpm: number | null
@@ -96,8 +96,8 @@ export const musicAPI = {
     }),
   checkDuplicateHash: (hash: string) =>
     api.post('/music/check-duplicate', { hash }),
-  confirmGenre: (trackId: string, genre: string) =>
-    api.post('/music/confirm-genre', { track_id: trackId, genre }),
+  confirmGenre: (trackId: string, genre_id: string) =>
+    api.post('/music/confirm-genre', { track_id: trackId, genre_id }),
   cutMusicFile: (id: string, start: number, end: number) =>
     api.post(`/music/${id}/cut`, { start, end }),
   detectBpm: (id: string) => api.post(`/music/${id}/bpm-detect`),
@@ -148,8 +148,8 @@ export const musicAPI = {
   getArtists: () => api.get('/artists'),
   getArtistMusic: (artist: string) => api.get(`/artists/${encodeURIComponent(artist)}`),
   getArtistsCached: () => api.get('/artists/cached'),
-  setArtistGenre: (artist: string, genre: string) =>
-    api.put(`/artists/${encodeURIComponent(artist)}/genre`, { genre }),
+  setArtistGenre: (artist: string, genre_id: string) =>
+    api.put(`/artists/${encodeURIComponent(artist)}/genre`, { genre_id }),
   renameArtist: (oldName: string, newName: string) =>
     api.put(`/admin/artists/${encodeURIComponent(oldName)}/rename`, { new_name: newName }),
   reprocessArtists: () => api.post('/admin/artists/reprocess'),
@@ -220,7 +220,7 @@ export const musicAPI = {
   }) => api.post('/admin/music/bulk-add-to-playlist', data),
   bulkUpdateMusic: (data: {
     ids: string[]
-    genre?: string
+    genre_id?: string
     artist?: string
     album?: string
     release_date?: string
