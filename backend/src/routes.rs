@@ -1822,16 +1822,6 @@ pub async fn add_genre_alias_and_backfill(
             .json(serde_json::json!({"error": "Missing alias or genre_id"}));
     }
 
-    // Get the canonical name
-    let canonical_name: String = match sqlx::query_scalar("SELECT name FROM genres WHERE id = $1")
-        .bind(genre_id.unwrap())
-        .fetch_one(&db.pool)
-        .await
-    {
-        Ok(name) => name,
-        Err(_) => return HttpResponse::NotFound().finish(),
-    };
-
     // Add alias
     if let Err(e) = genre_label_service::add_alias(db, alias.unwrap(), genre_id.unwrap()).await {
         log::error!("Error adding alias: {}", e);
