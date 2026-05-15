@@ -1585,7 +1585,8 @@ pub async fn detect_genre(
                 .unwrap_or(false);
             HttpResponse::Ok().json(DetectGenreResponse {
                 artist_name: req.artist_name.clone(),
-                genre,
+                genre_id: genre,
+                genre_name: None, // We don't have the name here easily, but the ID is sufficient for the client
                 cached,
             })
         }
@@ -1792,7 +1793,8 @@ pub async fn preview_backfill_handler(
 ) -> HttpResponse {
     let db = &state.db;
     let alias = path.into_inner();
-    match genre_label_service::preview_backfill(db, &alias).await {
+    // Default to a null UUID if no target is specified, though preview_backfill currently doesn't use target_genre_id for its logic
+    match genre_label_service::preview_backfill(db, &alias, Uuid::nil()).await {
         Ok((music_rows, artist_rows)) => HttpResponse::Ok().json(serde_json::json!({
             "music_rows": music_rows,
             "artist_rows": artist_rows
@@ -1837,7 +1839,7 @@ pub async fn add_genre_alias_and_backfill(
     }
 
     // Backfill
-    match genre_label_service::backfill_alias(db, alias.unwrap(), &canonical_name).await {
+    match genre_label_service::backfill_alias(db, alias.unwrap(), genre_id.unwrap()).await {
         Ok(count) => HttpResponse::Ok().json(serde_json::json!({ "updated_tracks": count })),
         Err(e) => {
             log::error!("Error backfilling alias: {}", e);
