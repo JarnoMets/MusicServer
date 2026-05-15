@@ -63,6 +63,7 @@
               v-model="playlistItems" 
               item-key="id"
               handle=".drag-handle"
+              :options="draggableOptions"
               @end="handleReorder"
               :disabled="!canEdit || isReordering"
               class="draggable-list"
@@ -517,6 +518,15 @@ const handleReorder = async () => {
   } finally {
     isReordering.value = false
   }
+}
+
+// Draggable / SortableJS options to allow auto-scrolling while dragging
+const draggableOptions = {
+  scroll: true,
+  scrollSensitivity: 60,
+  scrollSpeed: 10,
+  bubbleScroll: true,
+  fallbackOnBody: true,
 }
 
 const closePlaylistDetail = () => {

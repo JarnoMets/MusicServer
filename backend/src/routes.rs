@@ -2269,7 +2269,7 @@ pub async fn reorder_playlist_tracks(
         },
         Err(e) => {
             log::error!("Error reordering tracks for playlist {}: {}", playlist_id, e);
-            HttpResponse::InternalServerError().finish()
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
         }
     }
 }
