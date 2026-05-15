@@ -24,8 +24,10 @@ pub async fn get_all_tracks_cached(state: &AppState) -> Result<Vec<crate::models
     }
 
     // Load from DB and populate cache
+    // We increased this because a few thousand tracks is still very small for modern systems/browsers
+    // and leads to a much better UX than constant pagination.
     let params = crate::models::MusicQueryParams {
-        limit: Some(2000), // reasonable upper bound for 'all tracks' in UI
+        limit: Some(10000), 
         ..Default::default()
     };
 

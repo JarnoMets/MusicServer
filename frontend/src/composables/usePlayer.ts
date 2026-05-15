@@ -105,6 +105,7 @@ interface PlayerState {
   autoplay: boolean
   shuffle: boolean
   repeat: 'off' | 'all' | 'one'
+  prefetchBuffer: Map<string, string> // trackId -> blobUrl/objectUrl
 }
 
 const state = reactive<PlayerState>({
@@ -118,7 +119,54 @@ const state = reactive<PlayerState>({
   autoplay: true,
   shuffle: false,
   repeat: 'off',
+  prefetchBuffer: new Map(),
 })
+
+const prefetchNextTracks = () => {
+  if (state.queue.length === 0 || state.currentIndex === -1) return
+
+  // Prefetch up to 2 next tracks
+  const nextIndices = [state.currentIndex + 1, state.currentIndex + 2]
+  if (state.repeat === 'all') {
+    // If repeat all, we might want to wrap around
+    nextIndices[0] %= state.queue.length
+    nextIndices[1] %= state.queue.length
+  }
+
+  nextIndices.forEach(idx => {
+    if (idx >= 0 && idx < state.queue.length) {
+      const track = state.queue[idx]
+      prefetchTrack(track.id)
+    }
+  })
+}
+
+const prefetchTrack = async (id: string) => {
+  if (state.prefetchBuffer.has(id)) return
+
+  try {
+    const url = buildStreamUrl(id)
+    const response = await fetch(url)
+    if (!response.ok) return
+
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    state.prefetchBuffer.set(id, objectUrl)
+    console.debug(`[Prefetch] Buffered track ${id}`)
+
+    // Keep buffer small (e.g. 3 tracks)
+    if (state.prefetchBuffer.size > 3) {
+      // Remove oldest (first inserted)
+      const firstKey = state.prefetchBuffer.keys().next().value
+      if (firstKey) {
+        URL.revokeObjectURL(state.prefetchBuffer.get(firstKey)!)
+        state.prefetchBuffer.delete(firstKey)
+      }
+    }
+  } catch (e) {
+    console.warn(`[Prefetch] Failed for track ${id}:`, e)
+  }
+}
 
 const buildStreamUrl = (musicId: string) => {
   const base = `${API_BASE_URL}/music/${musicId}/stream`
@@ -175,7 +223,14 @@ const playLocalTrack = (params: {
     initial_key: params.initial_key,
     duration: params.duration,
   }
-  state.audioUrl = buildStreamUrl(params.id)
+
+  // Use prefetched URL if available
+  if (state.prefetchBuffer.has(params.id)) {
+    state.audioUrl = state.prefetchBuffer.get(params.id)!
+  } else {
+    state.audioUrl = buildStreamUrl(params.id)
+  }
+
   state.updatedAt = Date.now()
   state.isPlaying = true
 
@@ -187,6 +242,9 @@ const playLocalTrack = (params: {
 
   // Mirror to DJ Deck 1 so the user can seamlessly transition to decks
   mirrorToDeck1()
+
+  // Trigger prefetch for next tracks
+  prefetchNextTracks()
 }
 
 const playInternetStream = (params: { title: string; url: string; genre?: string }) => {
@@ -221,16 +279,26 @@ const setQueue = (tracks: TrackInfo[], startIndex = 0) => {
   state.currentIndex = startIndex
   if (tracks.length > 0 && startIndex >= 0 && startIndex < tracks.length) {
     playLocalTrack(tracks[startIndex])
+  } else {
+    // If we just set the queue but didn't start playing (e.g. startIndex -1), 
+    // we should still prefetch the first tracks
+    prefetchNextTracks()
   }
 }
 
 const addToQueue = (track: TrackInfo) => {
   state.queue.push(track)
+  if (state.queue.length === 1 || (state.currentIndex !== -1 && state.queue.length <= state.currentIndex + 3)) {
+    prefetchNextTracks()
+  }
 }
 
 const clearQueue = () => {
   state.queue = []
   state.currentIndex = -1
+  // Clear prefetch buffer
+  state.prefetchBuffer.forEach(url => URL.revokeObjectURL(url))
+  state.prefetchBuffer.clear()
 }
 
 const hasPreviousTrack = () => {

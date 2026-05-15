@@ -8,6 +8,7 @@ export const useMusicStore = defineStore('music', () => {
   const musicFiles = ref<MusicFile[]>([])
   const allCachedLoaded = ref(false)
   const loadingAll = ref(false)
+  const incrementalStatus = ref<{ loaded: number; total: number | null }>({ loaded: 0, total: null })
 
   // Optimization: use a Map for O(1) lookups by id
   const musicMap = ref<Map<string, MusicFile>>(new Map())
@@ -145,11 +146,28 @@ export const useMusicStore = defineStore('music', () => {
   const refreshAllTracks = async () => {
     if (loadingAll.value) return
     loadingAll.value = true
+    
+    // Reset incremental status
+    incrementalStatus.value = { loaded: 0, total: null }
+    
     try {
+      // Step 1: Fetch a small initial batch quickly to make the UI feel responsive
+      const quickResp = await musicAPI.getMusicFiles({ limit: 100, sort: 'created_at', order: 'desc' })
+      if (Array.isArray(quickResp.data)) {
+        updateMusicFilesFromArray(quickResp.data as MusicFile[])
+        incrementalStatus.value.loaded = quickResp.data.length
+      }
+      
+      // Step 2: Fetch stats to know the total count
+      const statsResp = await musicAPI.getMusicStats()
+      incrementalStatus.value.total = statsResp.data.total_count
+      
+      // Step 3: Fetch the full cached list in the background
       const resp = await musicAPI.getAllCachedTracks()
       if (Array.isArray(resp.data)) {
         updateMusicFilesFromArray(resp.data as MusicFile[])
         allCachedLoaded.value = resp.data.length > 0
+        incrementalStatus.value.loaded = resp.data.length
       }
     } catch (e) {
       console.warn('Failed to refresh all cached tracks', e)
@@ -323,6 +341,7 @@ export const useMusicStore = defineStore('music', () => {
     playlists,
     loadingPlaylists,
     filters,
+    incrementalStatus,
     // actions
     init,
     refreshAllTracks,
