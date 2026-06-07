@@ -850,3 +850,66 @@ pub async fn bulk_add_to_playlist_by_regex(
         total_playlist_count: total_count,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn compute_file_hash_returns_sha256_hex_for_known_content() {
+        let mut tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let content = b"duplicate-check-payload";
+        tmp.write_all(content).expect("write temp file");
+        tmp.flush().expect("flush temp file");
+
+        let hash = compute_file_hash(tmp.path().to_str().unwrap())
+            .await
+            .expect("hash computation");
+
+        // SHA-256 of "duplicate-check-payload"
+        assert_eq!(
+            hash,
+            "af1a0fb9a08120bc0a80023d9fac7aa90a5bba9c516f5bf28c36511a84d5df9d"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_file_hash_is_deterministic_for_same_file() {
+        let mut tmp = tempfile::NamedTempFile::new().expect("temp file");
+        tmp.write_all(b"same-bytes-twice").expect("write temp file");
+        tmp.flush().expect("flush temp file");
+        let path = tmp.path().to_str().unwrap().to_string();
+
+        let first = compute_file_hash(&path).await.expect("first hash");
+        let second = compute_file_hash(&path).await.expect("second hash");
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn compute_file_hash_differs_for_different_content() {
+        let mut a = tempfile::NamedTempFile::new().expect("temp file a");
+        let mut b = tempfile::NamedTempFile::new().expect("temp file b");
+        a.write_all(b"content-a").expect("write a");
+        b.write_all(b"content-b").expect("write b");
+        a.flush().expect("flush a");
+        b.flush().expect("flush b");
+
+        let hash_a = compute_file_hash(a.path().to_str().unwrap())
+            .await
+            .expect("hash a");
+        let hash_b = compute_file_hash(b.path().to_str().unwrap())
+            .await
+            .expect("hash b");
+
+        assert_ne!(hash_a, hash_b);
+    }
+
+    #[tokio::test]
+    async fn compute_file_hash_returns_error_for_missing_file() {
+        let result = compute_file_hash("/nonexistent/path/for-hash-test.bin").await;
+        assert!(result.is_err());
+    }
+}
