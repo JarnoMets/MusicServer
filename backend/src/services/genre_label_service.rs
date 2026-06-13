@@ -505,5 +505,17 @@ pub fn resolve_genre_name(name: &str, resolver_map: &HashMap<String, String>) ->
 
 #[cfg(test)]
 mod tests {
-    use super::GenreLabelService;
+    use super::resolve_genre_name;
+    use std::collections::HashMap;
+
+    #[test]
+    fn resolve_genre_name_maps_canonical_and_alias_keys() {
+        let mut map = HashMap::new();
+        map.insert("electronic".to_string(), "Electronic".to_string());
+        map.insert("edm".to_string(), "Electronic".to_string());
+
+        assert_eq!(resolve_genre_name("Electronic", &map), "Electronic");
+        assert_eq!(resolve_genre_name("EDM", &map), "Electronic");
+        assert_eq!(resolve_genre_name("Unknown Genre", &map), "Unknown Genre");
+    }
 }
