@@ -850,3 +850,41 @@ pub async fn bulk_add_to_playlist_by_regex(
         total_playlist_count: total_count,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn compute_file_hash_matches_known_sha256() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        file.write_all(b"hello").expect("write");
+        file.flush().expect("flush");
+
+        let hash = compute_file_hash(file.path().to_str().unwrap())
+            .await
+            .expect("hash");
+
+        assert_eq!(
+            hash,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1aeb8b8e965347a645874840fd612e0"
+        );
+    }
+
+    #[test]
+    fn bulk_rename_regex_swaps_artist_and_title() {
+        let re = regex::Regex::new(r"^(.+) - (.+)$").unwrap();
+        let old = "Some Artist - Cool Song";
+        let new_value = re.replace(old, "$2 by $1").to_string();
+        assert_eq!(new_value, "Cool Song by Some Artist");
+    }
+
+    #[test]
+    fn bulk_rename_regex_skips_non_matching_titles() {
+        let re = regex::Regex::new(r"^(.+) - (.+)$").unwrap();
+        let old = "SingleTitleWithoutSeparator";
+        assert!(!re.is_match(old));
+    }
+}
