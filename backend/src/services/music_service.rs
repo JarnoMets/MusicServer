@@ -850,3 +850,30 @@ pub async fn bulk_add_to_playlist_by_regex(
         total_playlist_count: total_count,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::compute_file_hash;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn compute_file_hash_returns_sha256_hex() {
+        let dir = std::env::temp_dir().join(format!("music-hash-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sample.mp3");
+        let mut file = std::fs::File::create(&path).expect("create file");
+        file.write_all(b"duplicate-check-content")
+            .expect("write file");
+
+        let hash = compute_file_hash(path.to_str().unwrap())
+            .await
+            .expect("hash file");
+
+        assert_eq!(
+            hash,
+            "035176fa70f9776451db186adf5d6abfc7d0780f433614bbfd93726e10c5e68f"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
