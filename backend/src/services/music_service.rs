@@ -850,3 +850,56 @@ pub async fn bulk_add_to_playlist_by_regex(
         total_playlist_count: total_count,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::compute_file_hash;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn compute_file_hash_is_deterministic_for_known_content() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        file.write_all(b"duplicate-check-payload")
+            .expect("write temp file");
+        file.flush().expect("flush temp file");
+
+        let path = file.path().to_str().expect("temp path");
+        let first = compute_file_hash(path).await.expect("hash file");
+        let second = compute_file_hash(path).await.expect("hash file again");
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn compute_file_hash_differs_for_different_content() {
+        let mut first = NamedTempFile::new().expect("first temp file");
+        first.write_all(b"track-a").expect("write first file");
+        first.flush().expect("flush first file");
+
+        let mut second = NamedTempFile::new().expect("second temp file");
+        second.write_all(b"track-b").expect("write second file");
+        second.flush().expect("flush second file");
+
+        let first_hash = compute_file_hash(first.path().to_str().unwrap())
+            .await
+            .expect("hash first file");
+        let second_hash = compute_file_hash(second.path().to_str().unwrap())
+            .await
+            .expect("hash second file");
+
+        assert_ne!(first_hash, second_hash);
+        assert_eq!(first_hash.len(), 64);
+        assert_eq!(second_hash.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn compute_file_hash_returns_error_for_missing_file() {
+        let err = compute_file_hash("/tmp/music-server-missing-file-test.bin")
+            .await
+            .expect_err("missing file should fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+}

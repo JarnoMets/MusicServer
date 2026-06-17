@@ -505,5 +505,21 @@ pub fn resolve_genre_name(name: &str, resolver_map: &HashMap<String, String>) ->
 
 #[cfg(test)]
 mod tests {
-    use super::GenreLabelService;
+    use super::resolve_genre_name;
+    use std::collections::HashMap;
+
+    #[test]
+    fn resolve_genre_name_maps_alias_case_insensitively() {
+        let mut map = HashMap::new();
+        map.insert("hip-hop".to_string(), "Hip Hop".to_string());
+
+        assert_eq!(resolve_genre_name("Hip-Hop", &map), "Hip Hop");
+        assert_eq!(resolve_genre_name("hip-hop", &map), "Hip Hop");
+    }
+
+    #[test]
+    fn resolve_genre_name_returns_original_when_unmapped() {
+        let map = HashMap::new();
+        assert_eq!(resolve_genre_name("Experimental", &map), "Experimental");
+    }
 }
