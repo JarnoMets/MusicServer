@@ -658,19 +658,27 @@ pub async fn bulk_update_music(
     Ok(updated_count)
 }
 
+/// Validate bulk regex field and compile the pattern before any DB work.
+fn prepare_bulk_regex(
+    field: &str,
+    pattern: &str,
+) -> Result<(regex::Regex, &'static str), Box<dyn std::error::Error>> {
+    let re = regex::Regex::new(pattern)?;
+    let field_key = match field {
+        "title" => "title",
+        "artist" => "artist",
+        "album" => "album",
+        _ => return Err("Invalid field. Must be 'title', 'artist', or 'album'".into()),
+    };
+    Ok((re, field_key))
+}
+
 /// Bulk rename music files by regex pattern
 pub async fn bulk_rename_by_regex(
     db: &Database,
     req: BulkRenameByRegexRequest,
 ) -> Result<BulkRenameResponse, Box<dyn std::error::Error>> {
-    // Validate the regex pattern
-    let re = regex::Regex::new(&req.pattern)?;
-    
-    // Validate the field name
-    let field = match req.field.as_str() {
-        "title" | "artist" | "album" => req.field.as_str(),
-        _ => return Err("Invalid field. Must be 'title', 'artist', or 'album'".into()),
-    };
+    let (re, field) = prepare_bulk_regex(&req.field, &req.pattern)?;
     
     // Get all music files
     let sql = format!("{} ORDER BY title", select_music_files());
@@ -736,14 +744,7 @@ pub async fn bulk_add_to_playlist_by_regex(
     db: &Database,
     req: BulkAddToPlaylistByRegexRequest,
 ) -> Result<BulkAddToPlaylistResponse, Box<dyn std::error::Error>> {
-    // Validate the regex pattern
-    let re = regex::Regex::new(&req.pattern)?;
-    
-    // Validate the field name
-    let field = match req.field.as_str() {
-        "title" | "artist" | "album" => req.field.as_str(),
-        _ => return Err("Invalid field. Must be 'title', 'artist', or 'album'".into()),
-    };
+    let (re, field) = prepare_bulk_regex(&req.field, &req.pattern)?;
     
     // Verify the playlist exists
     let playlist_exists: bool = sqlx::query_scalar(
@@ -853,8 +854,29 @@ pub async fn bulk_add_to_playlist_by_regex(
 
 #[cfg(test)]
 mod tests {
-    use super::compute_file_hash;
+    use super::{compute_file_hash, prepare_bulk_regex};
     use std::io::Write;
+
+    #[test]
+    fn prepare_bulk_regex_rejects_invalid_field() {
+        let err = prepare_bulk_regex("genre", "^test$").unwrap_err();
+        assert!(err.to_string().contains("Invalid field"));
+    }
+
+    #[test]
+    fn prepare_bulk_regex_rejects_invalid_pattern() {
+        assert!(prepare_bulk_regex("title", "(unclosed").is_err());
+    }
+
+    #[test]
+    fn prepare_bulk_regex_accepts_supported_fields() {
+        let (re, field) = prepare_bulk_regex("title", r"^(\d{4}) - (.+)$").expect("valid input");
+        assert_eq!(field, "title");
+        assert_eq!(
+            re.replace("2024 - Artist Name", "$2 ($1)").to_string(),
+            "Artist Name (2024)"
+        );
+    }
 
     #[tokio::test]
     async fn compute_file_hash_returns_sha256_hex() {
