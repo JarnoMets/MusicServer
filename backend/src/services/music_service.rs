@@ -850,3 +850,30 @@ pub async fn bulk_add_to_playlist_by_regex(
         total_playlist_count: total_count,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn compute_file_hash_returns_sha256_hex() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        file.write_all(b"hello").expect("write temp file");
+        let path = file.path().to_str().expect("utf-8 path");
+
+        let hash = compute_file_hash(path).await.expect("hash file");
+
+        assert_eq!(
+            hash,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_file_hash_errors_for_missing_file() {
+        let result = compute_file_hash("/tmp/does-not-exist-music-server-test").await;
+        assert!(result.is_err());
+    }
+}
