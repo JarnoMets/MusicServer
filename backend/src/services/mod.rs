@@ -17,6 +17,7 @@ pub mod internet_stream_service;
 pub mod metadata_extractor;
 pub mod music_query_helpers;
 pub mod music_service;
+pub mod path_safety;
 pub mod playlist_service;
 pub mod playlist_export_service;
 pub mod rekordbox_service;
