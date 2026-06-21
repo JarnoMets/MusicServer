@@ -506,4 +506,36 @@ pub fn resolve_genre_name(name: &str, resolver_map: &HashMap<String, String>) ->
 #[cfg(test)]
 mod tests {
     use super::GenreLabelService;
+    use super::resolve_genre_name;
+    use std::collections::HashMap;
+
+    fn sample_resolver_map() -> HashMap<String, String> {
+        HashMap::from([
+            ("house".to_string(), "House".to_string()),
+            ("deep house".to_string(), "House".to_string()),
+            ("techno".to_string(), "Techno".to_string()),
+        ])
+    }
+
+    #[test]
+    fn resolve_genre_name_maps_alias_to_canonical() {
+        let map = sample_resolver_map();
+        assert_eq!(resolve_genre_name("deep house", &map), "House");
+        assert_eq!(resolve_genre_name("Deep House", &map), "House");
+    }
+
+    #[test]
+    fn resolve_genre_name_returns_original_when_unmapped() {
+        let map = sample_resolver_map();
+        assert_eq!(resolve_genre_name("Drum and Bass", &map), "Drum and Bass");
+    }
+
+    #[test]
+    fn resolve_genre_name_resolves_canonical_entry() {
+        let map = sample_resolver_map();
+        assert_eq!(resolve_genre_name("Techno", &map), "Techno");
+    }
+
+    #[allow(dead_code)]
+    type _GenreLabelService = GenreLabelService;
 }

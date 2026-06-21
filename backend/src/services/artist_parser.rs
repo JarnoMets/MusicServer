@@ -277,4 +277,22 @@ mod tests {
         assert_eq!(result.primary, vec!["Levela"]);
         assert!(result.remixers.contains(&"Macky Gee".to_string()), "Remixers: {:?}", result.remixers);
     }
+
+    #[test]
+    fn test_clean_title_strips_feat_and_prod() {
+        assert_eq!(
+            clean_title("Song Title (feat. Guest Artist)"),
+            "Song Title"
+        );
+        assert_eq!(
+            clean_title("Track Name [prod. by Producer X]"),
+            "Track Name"
+        );
+    }
+
+    #[test]
+    fn test_clean_artist_strips_topic_and_vevo() {
+        assert_eq!(clean_artist("Artist Name - Topic"), "Artist Name");
+        assert_eq!(clean_artist("ArtistVEVO"), "Artist");
+    }
 }
