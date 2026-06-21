@@ -302,8 +302,15 @@ pub async fn create_music_file(
     state: web::Data<AppState>,
     req: web::Json<CreateMusicFileRequest>,
 ) -> HttpResponse {
+    let req = req.into_inner();
+    if !crate::services::path_safety::is_allowed_music_path(&req.file_path) {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "file_path must be within the configured music directory"
+        }));
+    }
+
     let db = &state.db;
-    match music_service::create_music_file(db, req.into_inner()).await {
+    match music_service::create_music_file(db, req).await {
         Ok(file) => {
             // Invalidate cached 'all tracks' and notify clients.
             let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
@@ -458,6 +465,11 @@ pub async fn stream_music_file(
     })?;
 
     if let Some(file) = record {
+        if !crate::services::path_safety::is_allowed_music_path(&file.file_path) {
+            log::warn!("Blocked stream for disallowed path: {}", file.file_path);
+            return Ok(HttpResponse::Forbidden().finish());
+        }
+
         let file_path = Path::new(&file.file_path);
         if !file_path.exists() {
             return Ok(HttpResponse::NotFound().json(serde_json::json!({
@@ -1294,6 +1306,12 @@ pub async fn download_youtube(
 ) -> HttpResponse {
     log::info!("Starting YouTube download for URL: {}", req.url);
     log::info!("Output directory: {}", req.output_dir);
+
+    if !crate::services::path_safety::is_allowed_download_dir(&req.output_dir) {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "output_dir must be within the configured downloads directory"
+        }));
+    }
     
     let options = DownloadOptions {
         limit: req.limit,
