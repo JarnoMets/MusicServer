@@ -48,4 +48,18 @@ mod tests {
         assert_eq!(artist.as_deref(), Some("Artist"));
         assert_eq!(title, "Title");
     }
+
+    #[test]
+    fn test_artist_with_hyphen_in_name() {
+        let (artist, title) = parse_filename("DJ-K - Track Name.mp3");
+        assert_eq!(artist.as_deref(), Some("DJ-K"));
+        assert_eq!(title, "Track Name");
+    }
+
+    #[test]
+    fn test_trims_whitespace() {
+        let (artist, title) = parse_filename("  Artist  -  Title  .wav");
+        assert_eq!(artist.as_deref(), Some("Artist"));
+        assert_eq!(title, "Title");
+    }
 }
