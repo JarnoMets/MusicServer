@@ -381,7 +381,6 @@ pub async fn is_duplicate_path(db: &Database, file_path: &str) -> Result<bool, s
 }
 
 /// Get an existing music file by its hash
-#[allow(dead_code)]
 pub async fn get_by_hash(db: &Database, file_hash: &str) -> Result<Option<MusicFile>, sqlx::Error> {
     let sql = format!("{} WHERE file_hash = $1", select_music_files());
     sqlx::query_as::<_, MusicFile>(&sql)
