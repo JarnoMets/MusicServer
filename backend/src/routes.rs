@@ -589,8 +589,15 @@ pub async fn upload_music_files(
                         if let Some(ref hash) = file_hash {
                             match music_service::is_duplicate_hash(&db, hash).await {
                                 Ok(true) => {
-                                    // File is a duplicate - delete the uploaded file and skip
-                                    let _ = tokio::fs::remove_file(&filepath).await;
+                                    // Only delete when the duplicate lives at a different path.
+                                    // Retries that rewrite the same path must not remove the library file.
+                                    let same_path_as_library = match music_service::get_by_hash(&db, hash).await {
+                                        Ok(Some(existing)) => existing.file_path == file_path_str,
+                                        _ => false,
+                                    };
+                                    if !same_path_as_library {
+                                        let _ = tokio::fs::remove_file(&filepath).await;
+                                    }
                                     files_to_cleanup.pop(); // Remove from tracking
                                     errors.push(format!("Duplicate file skipped: {} (same content already exists)", filename));
                                     continue;
