@@ -505,5 +505,27 @@ pub fn resolve_genre_name(name: &str, resolver_map: &HashMap<String, String>) ->
 
 #[cfg(test)]
 mod tests {
-    use super::GenreLabelService;
+    use super::{normalize_str, resolve_genre_name};
+    use std::collections::HashMap;
+
+    #[test]
+    fn resolve_genre_name_maps_aliases_case_insensitively() {
+        let mut map = HashMap::new();
+        map.insert("rock".to_string(), "Rock".to_string());
+        map.insert("alt rock".to_string(), "Alternative Rock".to_string());
+
+        assert_eq!(resolve_genre_name("ALT ROCK", &map), "Alternative Rock");
+        assert_eq!(resolve_genre_name("rock", &map), "Rock");
+    }
+
+    #[test]
+    fn resolve_genre_name_passthrough_when_unmapped() {
+        let map = HashMap::new();
+        assert_eq!(resolve_genre_name("Jazz Fusion", &map), "Jazz Fusion");
+    }
+
+    #[test]
+    fn normalize_str_trims_whitespace() {
+        assert_eq!(normalize_str("  Drum and Bass  "), "Drum and Bass");
+    }
 }
