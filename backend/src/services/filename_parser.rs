@@ -48,4 +48,25 @@ mod tests {
         assert_eq!(artist.as_deref(), Some("Artist"));
         assert_eq!(title, "Title");
     }
+
+    #[test]
+    fn test_multiple_dashes_splits_on_first_separator() {
+        let (artist, title) = parse_filename("Artist - Title - Remix.mp3");
+        assert_eq!(artist.as_deref(), Some("Artist"));
+        assert_eq!(title, "Title - Remix");
+    }
+
+    #[test]
+    fn test_trims_whitespace_and_strips_extension_from_last_dot() {
+        let (artist, title) = parse_filename("  Artist  -  Title  .mp3  ");
+        assert_eq!(artist.as_deref(), Some("Artist"));
+        assert_eq!(title, "Title");
+    }
+
+    #[test]
+    fn test_double_extension_uses_last_dot() {
+        let (artist, title) = parse_filename("Artist - Title.flac.backup");
+        assert_eq!(artist.as_deref(), Some("Artist"));
+        assert_eq!(title, "Title.flac");
+    }
 }
