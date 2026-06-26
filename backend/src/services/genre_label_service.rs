@@ -505,5 +505,21 @@ pub fn resolve_genre_name(name: &str, resolver_map: &HashMap<String, String>) ->
 
 #[cfg(test)]
 mod tests {
-    use super::GenreLabelService;
+    use super::resolve_genre_name;
+    use std::collections::HashMap;
+
+    #[test]
+    fn resolve_genre_name_maps_alias_to_canonical() {
+        let mut map = HashMap::new();
+        map.insert("drum & bass".into(), "Drum and Bass".into());
+        map.insert("dnb".into(), "Drum and Bass".into());
+        assert_eq!(resolve_genre_name("dnb", &map), "Drum and Bass");
+        assert_eq!(resolve_genre_name("DNB", &map), "Drum and Bass");
+    }
+
+    #[test]
+    fn resolve_genre_name_returns_original_when_unmapped() {
+        let map = HashMap::new();
+        assert_eq!(resolve_genre_name("Unknown Tag", &map), "Unknown Tag");
+    }
 }
