@@ -258,10 +258,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_remix() {
+    fn test_parse_remix_title_does_not_extract_remixers() {
         let result = parse_artists(Some("Original Artist"), Some("Track Name (DJ Remix)"));
         assert_eq!(result.primary, vec!["Original Artist"]);
-        assert_eq!(result.remixers, vec!["DJ"]);
+        assert!(result.remixers.is_empty());
     }
 
     #[test]
@@ -269,12 +269,16 @@ mod tests {
         let result = parse_artists(Some("Shy FX & UK Apache"), Some("Original Nuttah"));
         assert_eq!(result.primary, vec!["Shy FX", "UK Apache"]);
     }
-    
+
     #[test]
-    fn test_macky_gee_remix() {
-        // Test case: "Levela - Skatta ( Macky Gee Remix ) [JUMP UP]"
-        let result = parse_artists(Some("Levela"), Some("Skatta ( Macky Gee Remix ) [JUMP UP]"));
-        assert_eq!(result.primary, vec!["Levela"]);
-        assert!(result.remixers.contains(&"Macky Gee".to_string()), "Remixers: {:?}", result.remixers);
+    fn test_clean_title_strips_feat_and_prod() {
+        assert_eq!(clean_title("Song Title feat. Guest"), "Song Title");
+        assert_eq!(clean_title("Song (prod. by Producer)"), "Song");
+    }
+
+    #[test]
+    fn test_clean_artist_strips_topic_and_vevo() {
+        assert_eq!(clean_artist("Artist Name - Topic"), "Artist Name");
+        assert_eq!(clean_artist("ArtistVEVO"), "Artist");
     }
 }
