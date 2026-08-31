@@ -174,8 +174,8 @@ defineExpose({ open, close })
               v-for="g in genres"
               :key="g.id"
               class="menu-item"
-              :class="{ active: currentTrack?.genre === g.name }"
-              @click="emit('set-genre', currentTrack!, g.name); close()"
+              :class="{ active: currentTrack?.genre_id === g.id }"
+              @click="emit('set-genre', currentTrack!, g.id); close()"
             >
               {{ g.name }}
             </button>
@@ -227,12 +227,12 @@ defineExpose({ open, close })
         </button>
 
         <button
-          v-if="!currentTrack.genre && currentTrack.guessed_genre"
+          v-if="currentTrack.genre_source === 'auto'"
           class="menu-item"
           @click="emit('confirm-genre', currentTrack!); close()"
         >
           <Icon name="check-circle" :size="15" />
-          <span>Confirm Genre ({{ currentTrack.guessed_genre }})</span>
+          <span>Confirm Genre ({{ currentTrack.genre_name }})</span>
         </button>
 
         <div class="menu-separator"></div>

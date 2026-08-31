@@ -98,10 +98,8 @@ async fn update_metadata(path: &Path, item: &MusicFile) {
         if let Some(album) = &item.album {
             tag.set_album(album.clone());
         }
-        if let Some(genre) = &item.genre {
+        if let Some(genre) = &item.genre_name {
             tag.set_genre(genre.clone());
-        } else if let Some(guessed) = &item.guessed_genre {
-            tag.set_genre(guessed.clone());
         }
         
         if let Some(track_num) = item.track_number {
@@ -156,7 +154,7 @@ fn generate_rekordbox_xml(playlist_name: &str, tracks: &[(MusicFile, String)]) -
         track.push_attribute(("Name", item.title.as_str()));
         track.push_attribute(("Artist", item.artist.as_deref().unwrap_or("")));
         track.push_attribute(("Album", item.album.as_deref().unwrap_or("")));
-        track.push_attribute(("Genre", item.genre.as_deref().or(item.guessed_genre.as_deref()).unwrap_or("")));
+        track.push_attribute(("Genre", item.genre_name.as_deref().unwrap_or("")));
         track.push_attribute(("Kind", "Audio File"));
         track.push_attribute(("Size", "0")); // Optional
         track.push_attribute(("TotalTime", (item.duration.unwrap_or(0) / 1000).to_string().as_str()));

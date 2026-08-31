@@ -117,6 +117,15 @@ const routes = [
       title: 'Edit Track',
       requiresAuth: true
     }
+  },
+  {
+    path: '/profile/tokens',
+    name: 'access-tokens',
+    component: () => import('../features/tokens/TokenManager.vue'),
+    meta: {
+      title: 'Access Tokens',
+      requiresAuth: true
+    }
   }
 ]
 

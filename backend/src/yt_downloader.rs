@@ -263,8 +263,8 @@ pub async fn download_youtube_playlist(
 
     let remaining_videos = filtered_videos.len() as u32;
 
-    let limit_text = if options.limit.is_some() {
-        format!(" (limited to {})", options.limit.unwrap())
+    let limit_text = if let Some(limit) = options.limit {
+        format!(" (limited to {})", limit)
     } else {
         " (no limit)".to_string()
     };

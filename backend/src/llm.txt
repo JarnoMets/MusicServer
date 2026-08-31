@@ -1,0 +1,641 @@
+# Music Server API — LLM Reference
+
+> Machine-readable documentation for AI assistants and LLM-based tooling.
+> Base URL: /api
+> Authentication: Bearer token in the Authorization header, or ?token= query param for SSE.
+> All authenticated endpoints accept: JWT (Google SSO), static ADMIN_TOKEN, static API_TOKEN,
+> or a user-generated personal access token (prefix: ms_).
+
+---
+
+## Authentication
+
+### Token Types
+
+| Type | Prefix | Source | Admin | Permissions |
+|------|--------|--------|-------|-------------|
+| JWT | (none) | Google SSO login | per user | full access |
+| Admin token | (none) | ADMIN_TOKEN_SHA256 env var | yes | full access |
+| API token | (none) | API_TOKEN_SHA256 env var | no | full access |
+| Personal access token | ms_ | Created via /api/tokens | no | configurable |
+
+### Personal Access Token Permissions
+
+Each personal access token carries four boolean flags:
+- can_read   — GET requests: stream music, browse library, playlists, artists, genres
+- can_create — POST requests: upload tracks, create playlists, add streams
+- can_edit   — PATCH/PUT requests: update metadata, rename, reorder
+- can_delete — DELETE requests: remove tracks, playlists, streams
+
+Tokens can optionally have an expires_at timestamp. Expired tokens return 401.
+Token management (CRUD on /api/tokens) requires full JWT authentication — personal access tokens cannot manage other tokens.
+
+---
+
+## Endpoints
+
+### Health
+
+GET /api/health
+  Auth: none
+  Response: { "status": "ok", "version": "x.y.z" }
+
+GET /api/health/db
+  Auth: none
+  Response: { "status": "ok" } | { "status": "error", "message": "..." }
+
+---
+
+### LLM Documentation
+
+GET /api/llm.txt
+  Auth: none
+  Response: this file (text/plain)
+
+---
+
+### Authentication
+
+GET /api/auth/google/url
+  Auth: none
+  Description: Get the Google OAuth2 authorization URL to start the login flow.
+  Response: { "url": "https://accounts.google.com/o/oauth2/v2/auth?..." }
+
+POST /api/auth/google/callback
+  Auth: none
+  Body: { "code": "<google_authorization_code>" }
+  Description: Exchange a Google authorization code for a JWT.
+  Response: { "token": "<jwt>", "user": { "id", "email", "name", "avatar_url", "is_admin" } }
+
+POST /api/auth/google/mobile
+  Auth: none
+  Body: { "id_token": "<google_id_token>" }
+  Description: Authenticate with a Google ID token (Android Credential Manager).
+  Response: { "token": "<jwt>", "user": { ... } }
+
+GET /api/me
+  Auth: required
+  Description: Return the current user's profile.
+  Response: { "id", "email", "name", "avatar_url", "is_admin" }
+           | { "type": "service_account", "is_admin": true } for static tokens
+
+---
+
+### Personal Access Tokens
+
+GET /api/tokens
+  Auth: JWT required
+  Description: List all personal access tokens for the current user.
+  Response: Array of TokenInfo (see schema below)
+
+POST /api/tokens
+  Auth: JWT required
+  Body: {
+    "name": "string (required, max 255 chars)",
+    "can_read": true,
+    "can_create": false,
+    "can_edit": false,
+    "can_delete": false,
+    "expires_at": "2026-12-31T00:00:00Z" | null
+  }
+  Description: Create a new personal access token. The plaintext token is returned ONCE.
+  Response: {
+    "token": "ms_<64 hex chars>",
+    "info": TokenInfo
+  }
+
+GET /api/tokens/:id
+  Auth: JWT required
+  Description: Get metadata for a specific token owned by the current user.
+  Response: TokenInfo
+
+PATCH /api/tokens/:id
+  Auth: JWT required
+  Body: {
+    "name": "string (optional)",
+    "can_read": bool (optional),
+    "can_create": bool (optional),
+    "can_edit": bool (optional),
+    "can_delete": bool (optional),
+    "expires_at": "ISO 8601 datetime (optional)",
+    "clear_expires_at": bool (optional, set true to remove expiry)
+  }
+  Description: Update a token's name, permissions, or expiry.
+  Response: TokenInfo
+
+DELETE /api/tokens/:id
+  Auth: JWT required
+  Description: Permanently revoke and delete a token.
+  Response: 204 No Content
+
+TokenInfo schema:
+  {
+    "id": "uuid",
+    "name": "string",
+    "can_read": bool,
+    "can_create": bool,
+    "can_edit": bool,
+    "can_delete": bool,
+    "last_used_at": "datetime | null",
+    "expires_at": "datetime | null",
+    "created_at": "datetime"
+  }
+
+---
+
+### Music Files
+
+GET /api/music
+  Auth: required
+  Query params: search, genre, artist, sort, order, limit, offset, unconfirmed_only, missing_metadata
+  Description: List music files with filtering and pagination.
+  Response: Array of MusicFile
+
+GET /api/music/all-cached
+  Auth: required
+  Description: Return all tracks from the in-memory cache (fast).
+  Response: Array of MusicFile
+
+GET /api/music/stats
+  Auth: required
+  Query params: search, genre, artist, unconfirmed_only, missing_metadata
+  Response: { "total": int }
+
+POST /api/music
+  Auth: required, can_create
+  Body: { "title", "artist"?, "album"?, "duration"?, "file_path" }
+  Description: Create a music file record.
+
+GET /api/music/:id
+  Auth: required
+  Response: MusicFile (full detail)
+
+PATCH /api/music/:id
+  Auth: required, can_edit
+  Body: Partial MusicFile fields
+  Description: Update track metadata.
+
+DELETE /api/music/:id
+  Auth: required, can_delete
+  Description: Remove track and its file.
+
+POST /api/music/upload
+  Auth: required, can_create
+  Body: multipart/form-data with file(s)
+  Description: Upload one or more audio files.
+
+POST /api/music/sync
+  Auth: required, can_create
+  Body: { "folder"?: "string" }
+  Description: Sync the music folder (scan for new/removed files).
+
+POST /api/music/:id/bpm-detect
+  Auth: required, can_edit
+  Description: Detect and store BPM for a track.
+
+POST /api/music/:id/cut
+  Auth: required, can_edit
+  Body: { "start": float, "end": float }
+  Description: Trim a track to the given time range (seconds).
+
+GET /api/music/:id/stream
+  Auth: required (query param ?token= supported for HTML5 audio)
+  Description: Stream the audio file (supports HTTP Range).
+
+GET /api/music/:id/playlists
+  Auth: required
+  Description: List playlists that contain this track.
+
+POST /api/music/release-date-lookup
+  Auth: required
+  Body: { "title": "string", "artist"?: "string" }
+  Description: Look up release date via configured metadata source.
+
+GET /api/music/metadata-suggestions
+  Auth: required
+  Query: limit, offset
+  Description: List pending metadata suggestions from background analysis.
+
+DELETE /api/music/metadata-suggestions/:id
+  Auth: required, can_delete
+  Description: Dismiss a metadata suggestion.
+
+DELETE /api/music/metadata-suggestions
+  Auth: required, can_delete
+  Description: Dismiss all pending metadata suggestions.
+
+POST /api/music/check-duplicate
+  Auth: required
+  Body: { "hash": "string" }
+  Description: Check whether a file with the given SHA-256 hash already exists.
+
+MusicFile schema (subset):
+  {
+    "id": "uuid",
+    "title": "string",
+    "artist": "string | null",
+    "album": "string | null",
+    "genre": "string | null",
+    "guessed_genre": "string | null",
+    "duration": int (seconds),
+    "release_date": "datetime | null",
+    "bpm": float | null,
+    "initial_key": "string | null",
+    "file_path": "string",
+    "file_hash": "string | null",
+    "metadata_analyzed": bool,
+    "created_at": "datetime",
+    "updated_at": "datetime"
+  }
+
+---
+
+### Playlists
+
+GET /api/playlists
+  Auth: required
+  Description: List all playlists (summary, no items).
+  Response: Array of PlaylistSummary
+
+POST /api/playlists
+  Auth: required, can_create
+  Body: { "name": "string", "description"?: "string" }
+
+GET /api/playlists/:id
+  Auth: required
+  Description: Get playlist with all tracks.
+  Response: PlaylistWithItems
+
+PATCH /api/playlists/:id
+  Auth: required, can_edit
+  Body: { "name"?: "string", "description"?: "string" }
+
+DELETE /api/playlists/:id
+  Auth: required, can_delete
+
+POST /api/playlists/:id/tracks
+  Auth: required, can_create
+  Body: { "music_file_id": "uuid", "position"?: int }
+  Description: Add a track to a playlist.
+
+DELETE /api/playlists/:playlist_id/tracks/:track_id
+  Auth: required, can_delete
+  Description: Remove a track from a playlist.
+
+POST /api/playlists/:id/reorder
+  Auth: required, can_edit
+  Body: { "music_file_ids": ["uuid", ...] }
+  Description: Set the new ordering of all tracks in a playlist.
+
+GET /api/playlists/:id/export/zip
+  Auth: required (query param ?token= supported)
+  Description: Download all playlist tracks as a ZIP archive.
+
+GET /api/playlists/:id/export/rekordbox
+  Auth: required (query param ?token= supported)
+  Description: Export playlist as a Rekordbox-compatible XML file.
+
+---
+
+### Artists
+
+GET /api/artists
+  Auth: required
+  Description: List all artists with track counts.
+
+GET /api/artists/cached
+  Auth: required
+  Description: Fast artist list from in-memory cache.
+
+GET /api/artists/:artist
+  Auth: required
+  Description: Get all tracks for a specific artist.
+
+PUT /api/artists/:artist/genre
+  Auth: required, can_edit
+  Body: { "genre": "string" }
+  Description: Set the canonical genre for an artist.
+
+---
+
+### Genres
+
+GET /api/genres
+  Auth: required
+  Description: List all genres with track counts.
+
+GET /api/genres/canonical
+  Auth: required
+  Description: List canonical genres with aliases and track counts.
+
+GET /api/genres/unmapped
+  Auth: required
+  Description: List raw genre strings not yet mapped to a canonical genre.
+
+GET /api/genres/suggest/:raw
+  Auth: required
+  Description: Suggest canonical genres for an unmapped raw genre string.
+
+POST /api/genres/detect
+  Auth: required
+  Body: { "artist_name": "string" }
+  Description: Detect genre for an artist via external lookup.
+
+GET /api/genres/cache
+  Auth: required
+  Description: Get the genre detection cache.
+
+DELETE /api/genres/cache
+  Auth: required, can_delete
+  Description: Clear the genre detection cache.
+
+---
+
+### Internet Streams
+
+GET /api/streams
+  Auth: required
+  Description: List all saved internet radio streams.
+
+POST /api/streams
+  Auth: required, can_create
+  Body: { "name": "string", "url": "string", "genre"?: "string", "description"?: "string" }
+
+PATCH /api/streams/:id
+  Auth: required, can_edit
+  Body: Partial stream fields
+
+DELETE /api/streams/:id
+  Auth: required, can_delete
+
+---
+
+### YouTube Downloader
+
+POST /api/youtube/download
+  Auth: required, can_create
+  Body: { "url": "string", "output_dir": "string", "limit"?: int, "audio_quality"?: "string" }
+  Description: Start a YouTube/playlist download session.
+  Response: { "session_id": "uuid" }
+
+GET /api/youtube/progress/:id
+  Auth: required
+  Description: Get download progress for a session.
+
+GET /api/youtube/stream/:id
+  Auth: required (query param ?token= supported)
+  Description: SSE stream of download progress events.
+
+POST /api/youtube/cancel/:id
+  Auth: required
+  Description: Cancel an in-progress download.
+
+GET /api/youtube/downloads
+  Auth: required
+  Description: List all past downloads.
+
+GET /api/youtube/stats
+  Auth: required
+  Description: Aggregate download statistics.
+
+DELETE /api/youtube/downloads/:video_id
+  Auth: required, can_delete
+  Description: Remove a download record.
+
+GET /api/youtube/playlists
+  Auth: required
+  Description: List saved YouTube playlist configurations.
+
+GET /api/youtube/playlists/:id
+  Auth: required
+  Description: Get a saved YouTube playlist with download history.
+
+---
+
+### Autoplay / DJ Mixer
+
+GET /api/autoplay/config
+  Auth: required
+  Response: { "match_time_seconds": int, "overlap_seconds": int, "exit_time_seconds": int }
+
+PUT /api/autoplay/config
+  Auth: required, can_edit
+  Body: { "match_time_seconds": int, "overlap_seconds": int, "exit_time_seconds": int }
+
+---
+
+### Server-Sent Events (Updates)
+
+GET /api/updates/stream
+  Auth: required (query param ?token= supported)
+  Description: SSE stream for real-time cache and library update events.
+
+GET /api/music/sync/stream/:id
+  Auth: required (query param ?token= supported)
+  Description: SSE stream of sync progress for a running sync session.
+
+---
+
+### Admin — Genre Management (admin only)
+
+POST /api/admin/genres
+  Auth: admin required
+  Body: { "name": "string", "description"?: "string" }
+  Description: Create a new canonical genre.
+
+PATCH /api/admin/genres/:id
+  Auth: admin required
+  Body: { "name"?: "string", "description"?: "string" }
+
+DELETE /api/admin/genres/:id
+  Auth: admin required
+
+POST /api/admin/genres/merge
+  Auth: admin required
+  Body: { "source_id": "uuid", "target_id": "uuid" }
+  Description: Merge one genre into another (all tracks re-tagged).
+
+POST /api/admin/genres/aliases
+  Auth: admin required
+  Body: { "alias": "string", "genre_id": "uuid" }
+  Description: Map a raw genre string to a canonical genre.
+
+POST /api/admin/genres/aliases/backfill
+  Auth: admin required
+  Body: { "alias": "string", "genre_id": "uuid" }
+  Description: Map alias and immediately backfill all tracks with that raw genre.
+
+GET /api/genres/aliases/preview/:alias
+  Auth: required
+  Description: Preview how many tracks would be affected by backfilling an alias.
+
+POST /api/admin/genres/aliases/backfill/start
+  Auth: admin required
+  Body: { "alias": "string", "genre_id": "uuid" }
+  Description: Start a streaming backfill job.
+  Response: { "session_id": "uuid" }
+
+GET /api/genres/aliases/backfill/:id/stream
+  Auth: required (query param ?token= supported)
+  Description: SSE stream of backfill progress.
+
+POST /api/admin/genres/reprocess-missing
+  Auth: admin required
+  Description: Re-run genre assignment for all tracks with missing genres.
+
+GET /api/genres/reprocess/:id/stream
+  Auth: required (query param ?token= supported)
+  Description: SSE stream of reprocess progress.
+
+---
+
+### Admin — Music Bulk Operations (admin only)
+
+POST /api/admin/music/bulk-rename
+  Auth: admin required
+  Body: { "field": "title"|"artist"|"album", "pattern": "regex", "replacement": "string" }
+  Description: Bulk rename tracks via regex substitution.
+
+POST /api/admin/music/bulk-add-to-playlist
+  Auth: admin required
+  Body: { "playlist_id": "uuid", "field": "title"|"artist"|"album", "pattern": "regex" }
+  Description: Add all matching tracks to a playlist.
+
+POST /api/admin/music/bulk-update
+  Auth: admin required
+  Body: { "ids": ["uuid", ...], "genre"?, "artist"?, "album"?, "release_date"?, "bpm"?, "initial_key"? }
+  Description: Bulk update metadata for a list of tracks.
+
+---
+
+### Admin — Artists (admin only)
+
+PUT /api/admin/artists/:artist/rename
+  Auth: admin required
+  Body: { "new_name": "string" }
+  Description: Rename an artist across all tracks.
+
+POST /api/admin/artists/reprocess
+  Auth: admin required
+  Description: Re-run artist parsing for all tracks.
+
+---
+
+### Admin — YouTube Playlists (admin only)
+
+POST /api/admin/youtube/playlists
+  Auth: admin required
+  Body: { "name": "string", "url": "string", "description"?: "string", "autoDownload"?: bool }
+  Description: Save a YouTube playlist for periodic auto-download.
+
+PATCH /api/admin/youtube/playlists/:id
+  Auth: admin required
+  Body: Partial playlist fields
+
+DELETE /api/admin/youtube/playlists/:id
+  Auth: admin required
+
+POST /api/admin/youtube/playlists/:id/sync
+  Auth: admin required
+  Description: Trigger an immediate sync for a saved playlist.
+
+---
+
+### Admin — Auto-Download Scheduler (admin only)
+
+GET /api/admin/auto-download/config
+  Auth: admin required
+  Response: AutoDownloadConfig
+
+PUT /api/admin/auto-download/config
+  Auth: admin required
+  Body: Partial AutoDownloadConfig fields
+
+GET /api/admin/auto-download/status
+  Auth: admin required
+  Response: { "running": bool, "last_run": "datetime | null" }
+
+POST /api/admin/auto-download/trigger
+  Auth: admin required
+  Description: Trigger the auto-download scheduler immediately.
+
+POST /api/admin/auto-download/stop
+  Auth: admin required
+  Description: Stop the currently running auto-download job.
+
+---
+
+### Admin — Audit Log (admin only)
+
+GET /api/admin/audit/logs
+  Auth: admin required
+  Query: table_name, record_id, user_id, action, limit, offset
+  Description: Browse the change history audit log.
+
+POST /api/admin/audit/revert
+  Auth: admin required
+  Body: { "audit_log_id": "uuid" }
+  Description: Revert a logged change back to the previous value.
+
+---
+
+### Admin — Metadata Configuration (admin only)
+
+GET /api/admin/metadata/config
+  Auth: admin required
+  Response: { "metadata_source": "discogs"|"musicbrainz", "discogs_token": "string | null" }
+
+PUT /api/admin/metadata/config
+  Auth: admin required
+  Body: { "metadata_source"?: "string", "discogs_token"?: "string" }
+  Description: Update metadata source and API credentials.
+
+---
+
+## Error Format
+
+All errors follow:
+  { "error": "error_code", "message": "Human readable description" }
+
+Common HTTP status codes:
+  200 OK            — success with body
+  201 Created       — resource created
+  204 No Content    — success, no body (e.g. DELETE)
+  400 Bad Request   — invalid input
+  401 Unauthorized  — missing or invalid token
+  403 Forbidden     — authenticated but insufficient permissions
+  404 Not Found     — resource does not exist
+  422 Unprocessable — validation error
+  500 Internal      — server error
+
+---
+
+## SSE (Server-Sent Events) Usage
+
+Endpoints ending in /stream return an SSE stream. Browsers cannot set Authorization headers
+for EventSource, so pass the token as a query parameter:
+
+  const source = new EventSource('/api/music/sync/stream/SESSION_ID?token=YOUR_TOKEN')
+  source.onmessage = (event) => {
+    const data = JSON.parse(event.data)
+    console.log(data)
+  }
+
+---
+
+## Personal Access Token Quick Start
+
+1. Log in with Google SSO to obtain a JWT.
+2. POST /api/tokens with the desired permissions and a human-readable name.
+3. Copy the returned token value (shown once only).
+4. Use the token in subsequent requests:
+   Authorization: Bearer ms_<your token>
+
+Example (curl):
+  TOKEN=$(curl -s -X POST /api/tokens \
+    -H "Authorization: Bearer <JWT>" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"curl client","can_read":true}' \
+    | jq -r .token)
+
+  curl /api/music -H "Authorization: Bearer $TOKEN"

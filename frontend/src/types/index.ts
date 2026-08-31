@@ -5,8 +5,9 @@ export interface MusicFile {
   title: string
   artist?: string | null
   album?: string | null
-  genre?: string | null
-  guessed_genre?: string | null
+  genre_id?: string | null
+  genre_name?: string | null
+  genre_source?: 'user' | 'auto' | 'file_tag' | null
   release_date?: string | null
   duration?: number | null
   file_path: string
@@ -81,6 +82,7 @@ export interface EditState {
     artist: string
     album: string
     genre: string
+    genre_id: string
     release_date: string
     bpm: number | null
     initial_key: string

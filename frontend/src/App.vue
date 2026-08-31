@@ -88,6 +88,7 @@
                       <span>{{ user.email }}</span>
                     </div>
                     <div class="dropdown-divider"></div>
+                    <router-link class="dropdown-btn" to="/profile/tokens" @click="showUserMenu = false">Access Tokens</router-link>
                     <button class="dropdown-btn" @click="handleLogout">Log out</button>
                   </div>
                 </Transition>

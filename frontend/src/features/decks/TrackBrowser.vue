@@ -54,7 +54,7 @@
     </div>
 
     <!-- Track List -->
-    <div class="browser-track-list" ref="trackListRef">
+    <div class="browser-track-list">
       <div v-if="loading" class="browser-loading">
         <Icon name="loader" :size="18" class="animate-spin" />
         Loading...
@@ -77,7 +77,7 @@
           <div class="track-name">{{ track.title }}</div>
           <div class="track-meta">
             {{ track.artist || 'Unknown' }}
-            <span v-if="track.genre" class="track-genre-badge">{{ track.genre }}</span>
+            <span v-if="track.genre_name" class="track-genre-badge">{{ track.genre_name }}</span>
           </div>
         </div>
         <div class="track-stats">
@@ -171,7 +171,6 @@ const genres = ref<string[]>([])
 const hasMore = ref(false)
 const page = ref(1)
 const limit = 50
-const trackListRef = ref<HTMLElement | null>(null)
 
 const sourceTabs = [
   { value: 'all' as BrowserSource, label: 'All', icon: 'list' },

@@ -190,7 +190,7 @@
                     <div class="missing-badges">
                     <span v-if="!track.release_date" class="badge missing">Date</span>
                     <span v-if="!track.album" class="badge missing">Album</span>
-                    <span v-if="!track.genre && !track.guessed_genre" class="badge missing">Genre</span>
+                    <span v-if="!track.genre_id" class="badge missing">Genre</span>
                     </div>
                 </td>
                 <td>
@@ -519,7 +519,6 @@ const applyScanResult = async (track: MusicFile) => {
     await musicAPI.updateMusicFile(track.id, {
       release_date: releaseDate,
       album: result.album || undefined,
-      genre: result.genre || undefined,
       metadata_analyzed: true
     })
     
@@ -654,7 +653,7 @@ function shouldIncludeSuggestion(sug: MetadataSuggestion, track: MusicFile | und
   if (sug.album && (!track.album || sug.album !== track.album)) return true
 
   // Genre change?
-  if (sug.genre && (!track.genre || sug.genre !== track.genre)) return true
+  if (sug.genre && sug.genre !== track.genre_name) return true
 
   // Release date change? Do a simple string compare; if either is missing treat as a change
   if (sug.release_date) {
@@ -699,8 +698,7 @@ const applySuggestion = async (suggestion: MetadataSuggestion & { track: MusicFi
       title: suggestion.track.title, // keep existing title
       artist: suggestion.track.artist || '', // keep existing artist
       album: suggestion.album || suggestion.track.album || '',
-      genre: suggestion.genre || suggestion.track.genre || '',
-      release_date: releaseDate || undefined, 
+      release_date: releaseDate || undefined,
       metadata_analyzed: true
     })
     

@@ -7,4 +7,5 @@ pub mod db;
 pub mod models;
 pub mod routes;
 pub mod services;
+pub mod token_routes;
 pub mod yt_downloader;

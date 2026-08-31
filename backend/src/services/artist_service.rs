@@ -1,5 +1,6 @@
 use crate::db::Database;
 use crate::models::{ArtistSummary, MusicFile};
+use uuid::Uuid;
 
 /// Get all unique artists from the music library
 #[allow(dead_code)]
@@ -17,12 +18,13 @@ pub async fn get_all_artists_with_summary(db: &Database) -> Result<Vec<ArtistSum
         r#"
         SELECT 
             mf.artist,
-            ag.genre,
+            g.name as genre,
             COUNT(mf.id) as song_count
         FROM music_files mf
         LEFT JOIN artist_genres ag ON ag.artist_name = mf.artist
+        LEFT JOIN genres g ON ag.genre_id = g.id
         WHERE mf.artist IS NOT NULL AND mf.artist != ''
-        GROUP BY mf.artist, ag.genre
+        GROUP BY mf.artist, g.name
         ORDER BY mf.artist ASC
         "#
     )
@@ -45,7 +47,7 @@ pub async fn get_music_by_artist(
     db: &Database,
     artist: &str,
 ) -> Result<Vec<MusicFile>, sqlx::Error> {
-    let sql = format!("{} WHERE artist = $1 ORDER BY title ASC", crate::services::music_query_helpers::select_music_files());
+    let sql = format!("{} WHERE mf.artist = $1 ORDER BY mf.title ASC", crate::services::music_query_helpers::select_music_files());
     sqlx::query_as::<_, MusicFile>(&sql)
     .bind(artist)
     .fetch_all(&db.pool)
@@ -60,7 +62,7 @@ pub async fn get_music_featuring_artist(
     // Search for artist in title (for features/remixes) or as main artist
     let search_pattern = format!("%{}%", artist);
     let sql = format!(
-        "{} WHERE artist = $1 OR artist ILIKE $2 OR title ILIKE $2 ORDER BY CASE WHEN artist = $1 THEN 0 ELSE 1 END, title ASC",
+        "{} WHERE mf.artist = $1 OR mf.artist ILIKE $2 OR mf.title ILIKE $2 ORDER BY CASE WHEN mf.artist = $1 THEN 0 ELSE 1 END, mf.title ASC",
         crate::services::music_query_helpers::select_music_files()
     );
     
@@ -71,48 +73,33 @@ pub async fn get_music_featuring_artist(
     .await
 }
 
-/// Update genre for all files by a specific artist
+/// Update genre for all files by a specific artist using the canonical genre_id
 #[allow(dead_code)]
 pub async fn update_genre_for_artist(
     db: &Database,
     artist: &str,
-    genre: &str,
+    genre_id: Uuid,
 ) -> Result<u64, sqlx::Error> {
-    let result =
-        sqlx::query("UPDATE music_files SET genre = $1, updated_at = NOW() WHERE artist = $2")
-            .bind(genre)
-            .bind(artist)
-            .execute(&db.pool)
-            .await?;
-
-    Ok(result.rows_affected())
+    crate::services::genre_label_service::assign_genre_to_artist_tracks(db, artist, genre_id).await
 }
 
-/// Update guessed genre for all files by a specific artist
-pub async fn update_guessed_genre_for_artist(
+/// Assign auto-detected genre to all tracks by an artist (does not overwrite user-confirmed genres)
+pub async fn assign_auto_genre_for_artist(
     db: &Database,
     artist: &str,
-    guessed_genre: &str,
+    genre_id: Uuid,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query(
-        "UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE artist = $2",
-    )
-    .bind(guessed_genre)
-    .bind(artist)
-    .execute(&db.pool)
-    .await?;
-
-    Ok(result.rows_affected())
+    crate::services::genre_label_service::assign_genre_to_artist_tracks(db, artist, genre_id).await
 }
 
 /// Set genre for an artist (updates artist_genres table)
 pub async fn set_artist_genre(
     db: &Database,
     artist: &str,
-    genre: &str,
+    genre_id: Uuid,
+    raw_tag: Option<&str>,
 ) -> Result<(), sqlx::Error> {
-    crate::services::genre_cache_service::cache_genre(db, artist, genre).await?;
-    Ok(())
+    crate::services::genre_cache_service::cache_genre_id(db, artist, genre_id, raw_tag).await
 }
 
 /// Rename an artist - updates all music files and artist_genres table
@@ -186,20 +173,14 @@ pub struct RenameArtistResult {
 }
 
 /// Ensure an artist exists in the artist_genres table
-/// If they don't exist, adds them without a genre (to be detected later)
+/// If they don't exist, adds them with detection_status='pending' (to be detected later)
 pub async fn ensure_artist_exists(db: &Database, artist: &str) -> Result<(), sqlx::Error> {
-    // Only insert if not exists
     sqlx::query(
-        r#"
-        INSERT INTO artist_genres (artist_name, genre) 
-        VALUES ($1, 'Unknown')
-        ON CONFLICT (artist_name) DO NOTHING
-        "#
+        "INSERT INTO artist_genres (artist_name, detection_status) VALUES ($1, 'pending') ON CONFLICT (artist_name) DO NOTHING"
     )
     .bind(artist)
     .execute(&db.pool)
     .await?;
-    
     Ok(())
 }
 

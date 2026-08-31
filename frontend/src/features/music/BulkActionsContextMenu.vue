@@ -146,7 +146,7 @@ defineExpose({ open, close })
               v-for="g in genres"
               :key="g.id"
               class="menu-item"
-              @click="emit('bulk:set-genre', currentTracks, g.name); close()"
+              @click="emit('bulk:set-genre', currentTracks, g.id); close()"
             >
               {{ g.name }}
             </button>

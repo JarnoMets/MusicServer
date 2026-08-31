@@ -4,7 +4,9 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres};
 use url::Url;
 use uuid::Uuid;
+use chrono::{DateTime, Utc};
 use crate::models::user::User;
+use crate::models::access_token::AccessToken;
 
 #[derive(Clone)]
 pub struct Database {
@@ -187,5 +189,178 @@ impl Database {
         .bind(is_admin)
         .fetch_one(&self.pool)
         .await
+    }
+
+    // --- Access Token Methods ---
+
+    /// Generate a cryptographically secure access token.
+    /// Returns `(raw_token, sha256_hex_hash)`. Only store the hash.
+    pub fn generate_access_token() -> (String, String) {
+        use sha2::{Digest, Sha256};
+        // Two UUID v4s each contribute 122 bits of CSPRNG entropy → 244 bits total
+        let a = Uuid::new_v4().to_string().replace('-', "");
+        let b = Uuid::new_v4().to_string().replace('-', "");
+        let token = format!("ms_{}{}", a, b); // ms_ + 64 hex chars = 67 chars
+        let mut hasher = Sha256::new();
+        hasher.update(token.as_bytes());
+        let hash = hex::encode(hasher.finalize());
+        (token, hash)
+    }
+
+    /// Hash an existing raw token (for middleware lookup).
+    pub fn hash_access_token(raw: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(raw.as_bytes());
+        hex::encode(hasher.finalize())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_access_token(
+        &self,
+        user_id: &Uuid,
+        name: &str,
+        token_hash: &str,
+        can_read: bool,
+        can_create: bool,
+        can_edit: bool,
+        can_delete: bool,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<AccessToken, sqlx::Error> {
+        sqlx::query_as::<_, AccessToken>(
+            r#"
+            INSERT INTO access_tokens
+                (user_id, name, token_hash, can_read, can_create, can_edit, can_delete, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id, user_id, name, token_hash, can_read, can_create, can_edit, can_delete,
+                      last_used_at, expires_at, created_at
+            "#,
+        )
+        .bind(user_id)
+        .bind(name)
+        .bind(token_hash)
+        .bind(can_read)
+        .bind(can_create)
+        .bind(can_edit)
+        .bind(can_delete)
+        .bind(expires_at)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    pub async fn list_access_tokens(&self, user_id: &Uuid) -> Result<Vec<AccessToken>, sqlx::Error> {
+        sqlx::query_as::<_, AccessToken>(
+            r#"
+            SELECT id, user_id, name, token_hash, can_read, can_create, can_edit, can_delete,
+                   last_used_at, expires_at, created_at
+            FROM access_tokens
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn get_access_token_by_id(
+        &self,
+        id: &Uuid,
+        user_id: &Uuid,
+    ) -> Result<Option<AccessToken>, sqlx::Error> {
+        sqlx::query_as::<_, AccessToken>(
+            r#"
+            SELECT id, user_id, name, token_hash, can_read, can_create, can_edit, can_delete,
+                   last_used_at, expires_at, created_at
+            FROM access_tokens
+            WHERE id = $1 AND user_id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// Look up an access token by its SHA-256 hash (used by auth middleware).
+    pub async fn get_access_token_by_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<AccessToken>, sqlx::Error> {
+        sqlx::query_as::<_, AccessToken>(
+            r#"
+            SELECT id, user_id, name, token_hash, can_read, can_create, can_edit, can_delete,
+                   last_used_at, expires_at, created_at
+            FROM access_tokens
+            WHERE token_hash = $1
+            "#,
+        )
+        .bind(hash)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_access_token(
+        &self,
+        id: &Uuid,
+        user_id: &Uuid,
+        name: Option<&str>,
+        can_read: Option<bool>,
+        can_create: Option<bool>,
+        can_edit: Option<bool>,
+        can_delete: Option<bool>,
+        new_expires_at: Option<DateTime<Utc>>,
+        clear_expires_at: bool,
+    ) -> Result<Option<AccessToken>, sqlx::Error> {
+        // Build dynamic update — only change fields that were provided
+        let expires_value: Option<Option<DateTime<Utc>>> = if clear_expires_at {
+            Some(None) // set to NULL
+        } else {
+            new_expires_at.map(Some) // set to provided date
+        };
+
+        let result = sqlx::query_as::<_, AccessToken>(
+            r#"
+            UPDATE access_tokens SET
+                name = COALESCE($3, name),
+                can_read = COALESCE($4, can_read),
+                can_create = COALESCE($5, can_create),
+                can_edit = COALESCE($6, can_edit),
+                can_delete = COALESCE($7, can_delete),
+                expires_at = CASE WHEN $8 THEN NULL
+                                  WHEN $9::TIMESTAMPTZ IS NOT NULL THEN $9::TIMESTAMPTZ
+                                  ELSE expires_at
+                             END
+            WHERE id = $1 AND user_id = $2
+            RETURNING id, user_id, name, token_hash, can_read, can_create, can_edit, can_delete,
+                      last_used_at, expires_at, created_at
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(name)
+        .bind(can_read)
+        .bind(can_create)
+        .bind(can_edit)
+        .bind(can_delete)
+        .bind(clear_expires_at)
+        .bind(expires_value.and_then(|v| v))
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(result)
+    }
+
+    pub async fn delete_access_token(&self, id: &Uuid, user_id: &Uuid) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM access_tokens WHERE id = $1 AND user_id = $2",
+        )
+        .bind(id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 }

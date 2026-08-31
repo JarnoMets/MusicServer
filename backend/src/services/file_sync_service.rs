@@ -89,8 +89,8 @@ pub async fn sync_single_file(db: &Database, path: &Path) -> Result<bool, sqlx::
         title,
         artist,
         album,
-        genre: None,
-        guessed_genre: None,
+        genre_id: None,
+        genre_source: None,
         release_date: None,
         duration: duration_ms,
         file_path: path_str.to_string(),
@@ -121,35 +121,34 @@ pub async fn sync_single_file(db: &Database, path: &Path) -> Result<bool, sqlx::
             let db_clone = db;
             let artist_for_lookup = file.artist.clone();
             if let Some(artist_name) = artist_for_lookup {
-                // If artist has cached genre, set guessed_genre accordingly; otherwise detect and cache
-                match crate::services::genre_cache_service::get_cached_genre(
+                // If artist has cached genre_id, propagate to new track; otherwise detect
+                match crate::services::genre_cache_service::get_cached_genre_id(
                     db_clone,
                     &artist_name,
                 )
                 .await
                 {
-                    Ok(Some(cached_genre)) => {
-                        // update guessed_genre
-                        let _ = crate::services::artist_service::update_guessed_genre_for_artist(
+                    Ok(Some(genre_id)) => {
+                        let _ = crate::services::genre_label_service::assign_genre_to_artist_tracks(
                             db_clone,
                             &artist_name,
-                            &cached_genre,
+                            genre_id,
                         )
                         .await;
                     }
                     Ok(None) => {
-                        // perform detection
-                        if let Ok(Some(detected)) =
+                        // perform detection — detect_genre_for_artist caches and returns genre_id
+                        if let Ok(Some(genre_id)) =
                             crate::services::genre_detection::detect_genre_for_artist(
                                 db_clone,
                                 artist_name.clone(),
                             )
                             .await
                         {
-                            let _ = crate::services::artist_service::update_guessed_genre_for_artist(
+                            let _ = crate::services::genre_label_service::assign_genre_to_artist_tracks(
                                 db_clone,
                                 &artist_name,
-                                &detected,
+                                genre_id,
                             )
                             .await;
                         }

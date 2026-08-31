@@ -320,14 +320,14 @@ onUnmounted(() => {
           <td>{{ track.album || '&mdash;' }}</td>
           <td>{{ track.release_date ? new Date(track.release_date).getFullYear() : '&mdash;' }}</td>
           <td>
-            <span v-if="track.genre" class="genre-badge">{{ track.genre }}</span>
+            <span v-if="track.genre_name && track.genre_source !== 'auto'" class="genre-badge">{{ track.genre_name }}</span>
             <span 
-              v-else-if="track.guessed_genre" 
+              v-else-if="track.genre_source === 'auto'" 
               class="genre-badge muted clickable"
               @click.stop="emit('track:confirm-genre', track)"
               title="Click to confirm genre"
             >
-              {{ track.guessed_genre }}*
+              {{ track.genre_name }}*
             </span>
             <span v-else class="genre-badge empty">Untagged</span>
           </td>

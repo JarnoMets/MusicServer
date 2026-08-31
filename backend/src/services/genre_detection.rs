@@ -4,13 +4,14 @@ use crate::models::MetadataConfig;
 use crate::services::http_client_helpers::get_or_create_client;
 use serde_json::Value;
 use urlencoding::encode;
+use uuid::Uuid;
 
-/// Detect genre for an artist using MusicBrainz API or cache
-/// Uses provided HTTP client for connection reuse, falls back to creating one if not provided
+/// Detect genre for an artist and return its canonical genre_id.
+/// Caches the result in artist_genres. Returns None if no genre was found.
 pub async fn detect_genre_for_artist(
     db: &Database,
     artist_name: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<Uuid>, String> {
     detect_genre_for_artist_with_client(db, artist_name, None).await
 }
 
@@ -19,30 +20,26 @@ pub async fn detect_genre_for_artist_with_client(
     db: &Database,
     artist_name: String,
     http_client: Option<&reqwest::Client>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<Uuid>, String> {
     if artist_name.trim().is_empty() {
         return Ok(None);
     }
 
     // Check cache first
-    match genre_cache_service::get_cached_genre(db, &artist_name).await {
-        Ok(Some(cached_genre)) => {
-            log::debug!("Found cached genre for artist: {} -> {}", artist_name, cached_genre);
-            // Treat an explicit cached value of "Unknown" as no detection result
-            // so callers can mark the artist as NotFound and avoid retrying
-            // repeatedly. This prevents the scheduler from repeatedly picking
-            // up artists that have an explicit 'Unknown' cached value.
-            if cached_genre.eq_ignore_ascii_case("unknown") {
-                return Ok(None);
-            }
-
-            return Ok(Some(cached_genre));
+    match genre_cache_service::get_cached_genre_id(db, &artist_name).await {
+        Ok(Some(genre_id)) => {
+            log::debug!("Found cached genre_id for artist: {}", artist_name);
+            return Ok(Some(genre_id));
         }
         Ok(None) => {
-            log::debug!(
-                "No cached genre for artist: {}, querying metadata source",
-                artist_name
-            );
+            // Check if detection_status is 'not_found' — skip
+            if let Ok(Some(status)) = genre_cache_service::get_detection_status(db, &artist_name).await {
+                if status == "not_found" {
+                    log::debug!("Artist {} marked as not_found, skipping", artist_name);
+                    return Ok(None);
+                }
+            }
+            log::debug!("No cached genre for artist: {}, querying metadata source", artist_name);
         }
         Err(e) => {
             log::warn!("Error checking cache: {:?}", e);
@@ -57,7 +54,7 @@ pub async fn detect_genre_for_artist_with_client(
     let client = get_or_create_client(http_client)?;
 
     // Query configured source (Default: MusicBrainz)
-    let genre: Option<String> = if config.metadata_source == "discogs" {
+    let raw_genre: Option<String> = if config.metadata_source == "discogs" {
         log::debug!("Querying Discogs for genre for: {}", artist_name);
         DiscogsService::lookup_genre(&client, &config, &artist_name).await.map_err(|e| e.to_string())?
     } else {
@@ -65,52 +62,36 @@ pub async fn detect_genre_for_artist_with_client(
         query_musicbrainz(&artist_name, Some(&client)).await?
     };
 
-    // Store in cache if found
-    if let Some(ref g) = genre {
-        // Try to canonicalize the detected tag
-        match genre_label_service::canonicalize(db, g).await {
-            Ok(Some(canonical)) => {
-                // Cache canonical genre under artist
-                match genre_cache_service::cache_genre(db, &artist_name, &canonical).await {
-                    Ok(_) => log::debug!(
-                        "Cached canonical genre for artist={} -> {}",
-                        artist_name,
-                        canonical
-                    ),
-                    Err(e) => log::warn!("Error caching canonical genre: {:?}", e),
+    if let Some(ref raw) = raw_genre {
+        // Resolve or create canonical genre_id
+        match genre_label_service::resolve_or_create_genre_id(db, raw).await {
+            Ok(genre_id) => {
+                if let Err(e) = genre_cache_service::cache_genre_id(db, &artist_name, genre_id, Some(raw)).await {
+                    log::warn!("Error caching genre_id for artist={}: {:?}", artist_name, e);
+                } else {
+                    log::debug!("Cached genre_id for artist={} raw={}", artist_name, raw);
                 }
-                return Ok(Some(canonical));
-            }
-            Ok(None) => {
-                // No canonical mapping: store the raw detected tag
-                match genre_cache_service::cache_genre(db, &artist_name, g).await {
-                    Ok(_) => log::debug!(
-                        "Cached raw detected genre for artist: {} -> {}",
-                        artist_name,
-                        g
-                    ),
-                    Err(e) => log::warn!("Error caching raw detected genre: {:?}", e),
-                }
+                return Ok(Some(genre_id));
             }
             Err(e) => {
-                log::warn!("Error canonicalizing genre {}: {:?}", g, e);
+                log::warn!("Error resolving genre '{}': {:?}", raw, e);
+                // Store raw tag for later admin mapping
+                let _ = genre_cache_service::cache_raw_tag(db, &artist_name, raw).await;
             }
         }
     }
 
-    Ok(genre)
+    Ok(None)
 }
 
-/// Detect genre for a specific track (recording) using MusicBrainz recording search
-/// If a matching track is found and a genre tag is detected, the function will attempt to
-/// canonicalize it and write it to the `music_files.guessed_genre` column for matching
-/// rows (case-insensitive match on artist and title).
+/// Detect genre for a specific track (recording) using MusicBrainz recording search.
+/// Writes genre_id + genre_source='auto' directly to matching music_files rows.
 #[allow(dead_code)]
 pub async fn detect_genre_for_track(
     db: &Database,
     artist_name: String,
     track_title: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<Uuid>, String> {
     detect_genre_for_track_with_client(db, artist_name, track_title, None).await
 }
 
@@ -120,24 +101,21 @@ pub async fn detect_genre_for_track_with_client(
     artist_name: String,
     track_title: String,
     http_client: Option<&reqwest::Client>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<Uuid>, String> {
     if artist_name.trim().is_empty() || track_title.trim().is_empty() {
         return Ok(None);
     }
 
-    // Load config to check source
     let config = MetadataConfig::get_config(&db.pool).await
         .map_err(|e| format!("Failed to load metadata config: {}", e))?;
 
-    // Use provided client or create a temporary one
     let client = get_or_create_client(http_client)?;
 
-    // Query configured source
-    let genre = if config.metadata_source == "discogs" {
+    let raw_genre: Option<String> = if config.metadata_source == "discogs" {
         match DiscogsService::lookup_release_date(&client, &config, &track_title, &artist_name).await {
             Ok(Some((_date, _album, style, _conf))) => {
                 if let Some(s) = style {
-                     Some(s)
+                    Some(s)
                 } else {
                     query_musicbrainz_recording(&artist_name, &track_title, Some(&client)).await?
                 }
@@ -148,36 +126,26 @@ pub async fn detect_genre_for_track_with_client(
         query_musicbrainz_recording(&artist_name, &track_title, Some(&client)).await?
     };
 
-    if let Some(ref g) = genre {
-        // Try to canonicalize the detected tag
-        match genre_label_service::canonicalize(db, g).await {
-            Ok(Some(canonical)) => {
-                // Update guessed_genre for matching tracks (title + artist)
-                let _ = sqlx::query("UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE lower(artist) = lower($2) AND lower(title) = lower($3)")
-                    .bind(&canonical)
-                    .bind(&artist_name)
-                    .bind(&track_title)
-                    .execute(&db.pool)
-                    .await;
-
-                return Ok(Some(canonical));
-            }
-            Ok(None) => {
-                // No canonical mapping: write raw detected tag into guessed_genre
-                let _ = sqlx::query("UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE lower(artist) = lower($2) AND lower(title) = lower($3)")
-                    .bind(g)
-                    .bind(&artist_name)
-                    .bind(&track_title)
-                    .execute(&db.pool)
-                    .await;
+    if let Some(ref raw) = raw_genre {
+        match genre_label_service::resolve_or_create_genre_id(db, raw).await {
+            Ok(genre_id) => {
+                let _ = sqlx::query(
+                    "UPDATE music_files SET genre_id = $1, genre_source = 'auto', updated_at = NOW() WHERE LOWER(artist) = LOWER($2) AND LOWER(title) = LOWER($3) AND (genre_id IS NULL OR genre_source = 'auto')",
+                )
+                .bind(genre_id)
+                .bind(&artist_name)
+                .bind(&track_title)
+                .execute(&db.pool)
+                .await;
+                return Ok(Some(genre_id));
             }
             Err(e) => {
-                log::warn!("Error canonicalizing genre {}: {:?}", g, e);
+                log::warn!("Error resolving genre '{}' for track: {:?}", raw, e);
             }
         }
     }
 
-    Ok(genre)
+    Ok(None)
 }
 
 /// Query MusicBrainz recording search endpoint for a recording's top tag

@@ -1,6 +1,6 @@
 //! SSO Authentication route handlers
 
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder, HttpMessage};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::Deserialize;
@@ -295,6 +295,30 @@ pub async fn google_auth_mobile(
 }
 
 pub async fn get_me(state: web::Data<AppState>, req: HttpRequest) -> impl Responder {
+    use crate::auth_middleware::AuthInfo;
+
+    // Prefer the AuthInfo extension set by the middleware — works for all auth types.
+    let user_id = req.extensions().get::<AuthInfo>().and_then(|ai| ai.user_id);
+
+    if let Some(user_id) = user_id {
+        return match state.db.get_user_by_id(&user_id).await {
+            Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
+            Err(e) => {
+                log::error!("Failed to get user by id: {}", e);
+                HttpResponse::Unauthorized().json(serde_json::json!({ "error": "User not found" }))
+            }
+        };
+    }
+
+    if let Some(auth_info) = req.extensions().get::<AuthInfo>() {
+        // Static admin / API token — no associated user record.
+        return HttpResponse::Ok().json(serde_json::json!({
+            "type": "service_account",
+            "is_admin": auth_info.is_admin
+        }));
+    }
+
+    // Fallback: JWT parsing (backward compatibility for callers that bypass middleware).
     let user_id = match get_user_id_from_request(&req, &state.jwt_secret) {
         Some(id) => id,
         None => return HttpResponse::Unauthorized().json(serde_json::json!({ "error": "Not authenticated" })),

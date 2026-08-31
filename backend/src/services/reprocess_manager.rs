@@ -78,16 +78,12 @@ pub async fn start_reprocess(db: Database) -> String {
                     finished: false,
                 });
 
-                // Call detection which caches canonical genre when possible
+                // Call detection which caches canonical genre_id when possible
                 let _ = genre_detection::detect_genre_for_artist(&db, artist.clone()).await;
 
-                // If cached, update guessed_genre for files by artist
-                if let Ok(Some(cached)) = genre_cache_service::get_cached_genre(&db, artist).await {
-                    let _ = sqlx::query("UPDATE music_files SET guessed_genre = $1, updated_at = NOW() WHERE lower(artist) = lower($2)")
-                        .bind(&cached)
-                        .bind(artist)
-                        .execute(&db.pool)
-                        .await;
+                // If cached, propagate genre_id to artist's tracks
+                if let Ok(Some(genre_id)) = genre_cache_service::get_cached_genre_id(&db, artist).await {
+                    let _ = crate::services::genre_label_service::assign_genre_to_artist_tracks(&db, artist, genre_id).await;
                 }
 
                 processed += 1;

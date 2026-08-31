@@ -594,8 +594,8 @@ pub async fn upload_music_files(
                             title,
                             artist,
                             album: album_opt,
-                            genre: None,
-                            guessed_genre: None,
+                            genre_id: None,
+                            genre_source: None,
                             release_date: None,
                             duration: duration_ms,
                             file_path: file_path_str,
@@ -964,13 +964,10 @@ pub async fn get_metadata_suggestions(
     };
 
     // Also return total count for pagination
-    let total_count: (i64,) = match sqlx::query_as("SELECT COUNT(*) FROM metadata_suggestions")
+    let total_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM metadata_suggestions")
         .fetch_one(&state.db.pool)
         .await
-    {
-        Ok(c) => c,
-        Err(_) => (0,),
-    };
+        .unwrap_or_default();
 
     HttpResponse::Ok().json(serde_json::json!({
         "suggestions": suggestions,
@@ -1107,7 +1104,7 @@ pub async fn get_artist_music(
 
 #[derive(serde::Deserialize)]
 pub struct SetArtistGenreRequest {
-    pub genre: String,
+    pub genre_id: uuid::Uuid,
 }
 
 pub async fn set_artist_genre_handler(
@@ -1123,14 +1120,14 @@ pub async fn set_artist_genre_handler(
         .map(|s| s.into_owned())
         .unwrap_or(artist_name);
     
-    match artist_service::set_artist_genre(db, &decoded_name, &payload.genre).await {
+    match artist_service::set_artist_genre(db, &decoded_name, payload.genre_id, None).await {
         Ok(()) => {
-            // Also update guessed_genre for all their songs
-            let _ = artist_service::update_guessed_genre_for_artist(db, &decoded_name, &payload.genre).await;
-            // Invalidate artist summary cache and all tracks cache and notify clients
+            // Propagate genre to all auto-assigned tracks for this artist
+            let _ = crate::services::genre_label_service::assign_genre_to_artist_tracks(db, &decoded_name, payload.genre_id).await;
+            // Invalidate caches
             let _ = crate::services::cache_service::invalidate_artists_summary_cache(state.get_ref()).await;
             let _ = crate::services::cache_service::invalidate_all_tracks_cache(state.get_ref()).await;
-            let payload_val = serde_json::json!({"artist": decoded_name.clone(), "genre": payload.genre});
+            let payload_val = serde_json::json!({"artist": decoded_name.clone(), "genre_id": payload.genre_id});
             let _ = crate::services::cache_service::notify_change(state.get_ref(), "artist_genre_set", payload_val).await;
             HttpResponse::Ok().json(serde_json::json!({"success": true}))
         }
@@ -1144,7 +1141,7 @@ pub async fn set_artist_genre_handler(
 #[derive(serde::Deserialize)]
 pub struct ConfirmGenreRequest {
     pub track_id: String,
-    pub genre: String,
+    pub genre_id: uuid::Uuid,
 }
 
 pub async fn confirm_genre_handler(
@@ -1163,7 +1160,7 @@ pub async fn confirm_genre_handler(
         }
     };
 
-    let select_sql = format!("{} WHERE id = $1", crate::services::music_query_helpers::select_music_files());
+    let select_sql = format!("{} WHERE mf.id = $1", crate::services::music_query_helpers::select_music_files());
     let track = match sqlx::query_as::<_, crate::models::MusicFile>(&select_sql)
     .bind(track_id)
     .fetch_optional(&db.pool)
@@ -1180,34 +1177,31 @@ pub async fn confirm_genre_handler(
         }
     };
 
-    // Update the track's genre
-    if let Err(e) = sqlx::query("UPDATE music_files SET genre = $1, updated_at = NOW() WHERE id = $2")
-        .bind(&payload.genre)
-        .bind(track_id)
-        .execute(&db.pool)
-        .await {
-        log::error!("Error updating track genre: {}", e);
+    // Assign genre to track with source='user' (confirmed)
+    if let Err(e) = crate::services::genre_label_service::assign_genre_to_track(
+        db, track_id, payload.genre_id, "user"
+    ).await {
+        log::error!("Error confirming track genre: {}", e);
         return HttpResponse::InternalServerError().finish()
     }
 
     // If the artist doesn't have a confirmed genre yet, set it
     if let Some(artist) = &track.artist {
         if !artist.trim().is_empty() {
-            // Check if artist has a confirmed genre (not "Unknown")
-            match sqlx::query_scalar::<_, String>(
-                "SELECT genre FROM artist_genres WHERE artist_name = $1"
+            // Check if artist has a confirmed genre_id already
+            let has_genre: bool = sqlx::query_scalar(
+                "SELECT genre_id IS NOT NULL FROM artist_genres WHERE artist_name = $1"
             )
             .bind(artist)
             .fetch_optional(&db.pool)
-            .await {
-                Ok(Some(current_genre)) if current_genre != "Unknown" => {
-                    // Artist already has a confirmed genre, skip
-                }
-                _ => {
-                    // Artist doesn't exist or has "Unknown" genre, set it
-                    if let Err(e) = artist_service::set_artist_genre(db, artist, &payload.genre).await {
-                        log::warn!("Error setting artist genre: {}", e);
-                    }
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+
+            if !has_genre {
+                if let Err(e) = artist_service::set_artist_genre(db, artist, payload.genre_id, None).await {
+                    log::warn!("Error setting artist genre: {}", e);
                 }
             }
         }
@@ -1216,7 +1210,7 @@ pub async fn confirm_genre_handler(
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
         "track_id": payload.track_id,
-        "genre": payload.genre
+        "genre_id": payload.genre_id
     }))
 }
 
@@ -1591,7 +1585,8 @@ pub async fn detect_genre(
                 .unwrap_or(false);
             HttpResponse::Ok().json(DetectGenreResponse {
                 artist_name: req.artist_name.clone(),
-                genre,
+                genre_id: genre,
+                genre_name: None, // We don't have the name here easily, but the ID is sufficient for the client
                 cached,
             })
         }
@@ -1798,7 +1793,8 @@ pub async fn preview_backfill_handler(
 ) -> HttpResponse {
     let db = &state.db;
     let alias = path.into_inner();
-    match genre_label_service::preview_backfill(db, &alias).await {
+    // Default to a null UUID if no target is specified, though preview_backfill currently doesn't use target_genre_id for its logic
+    match genre_label_service::preview_backfill(db, &alias, Uuid::nil()).await {
         Ok((music_rows, artist_rows)) => HttpResponse::Ok().json(serde_json::json!({
             "music_rows": music_rows,
             "artist_rows": artist_rows
@@ -1826,16 +1822,6 @@ pub async fn add_genre_alias_and_backfill(
             .json(serde_json::json!({"error": "Missing alias or genre_id"}));
     }
 
-    // Get the canonical name
-    let canonical_name: String = match sqlx::query_scalar("SELECT name FROM genres WHERE id = $1")
-        .bind(genre_id.unwrap())
-        .fetch_one(&db.pool)
-        .await
-    {
-        Ok(name) => name,
-        Err(_) => return HttpResponse::NotFound().finish(),
-    };
-
     // Add alias
     if let Err(e) = genre_label_service::add_alias(db, alias.unwrap(), genre_id.unwrap()).await {
         log::error!("Error adding alias: {}", e);
@@ -1843,7 +1829,7 @@ pub async fn add_genre_alias_and_backfill(
     }
 
     // Backfill
-    match genre_label_service::backfill_alias(db, alias.unwrap(), &canonical_name).await {
+    match genre_label_service::backfill_alias(db, alias.unwrap(), genre_id.unwrap()).await {
         Ok(count) => HttpResponse::Ok().json(serde_json::json!({ "updated_tracks": count })),
         Err(e) => {
             log::error!("Error backfilling alias: {}", e);
@@ -2283,7 +2269,7 @@ pub async fn reorder_playlist_tracks(
         },
         Err(e) => {
             log::error!("Error reordering tracks for playlist {}: {}", playlist_id, e);
-            HttpResponse::InternalServerError().finish()
+            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
         }
     }
 }

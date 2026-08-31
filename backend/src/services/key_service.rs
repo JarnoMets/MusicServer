@@ -67,11 +67,7 @@ fn decode_to_mono_f32(file_path: &str, duration_secs: u64) -> Result<(Vec<f32>, 
     let mut current_frame: u64 = 0;
     let max_samples = duration_secs as usize * sample_rate as usize;
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            _ => break,
-        };
+    while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id { continue; }
         if current_frame < skip_frames {
             current_frame += packet.dur();
@@ -128,11 +124,11 @@ pub fn detect_key(file_path: &str) -> Result<String, KeyError> {
         fft.process(&mut buffer);
 
         // Analyze bins (first half only)
-        for bin in 0..window_size / 2 {
+        for (bin, complex_val) in buffer.iter().enumerate().take(window_size / 2) {
             let freq = bin as f32 * sample_rate as f32 / window_size as f32;
-            if freq < 20.0 || freq > 5000.0 { continue; } // Human hearing range for musical notes
+            if !(20.0..=5000.0).contains(&freq) { continue; } // Human hearing range for musical notes
             
-            let magnitude = (buffer[bin].re.powi(2) + buffer[bin].im.powi(2)).sqrt();
+            let magnitude = (complex_val.re.powi(2) + complex_val.im.powi(2)).sqrt();
             let midi_note = 12.0 * (freq / 440.0).log2() + 69.0;
             let note_idx = (midi_note.round() as i32 % 12 + 12) % 12;
             chromagram[note_idx as usize] += magnitude;
@@ -155,16 +151,15 @@ pub fn detect_key(file_path: &str) -> Result<String, KeyError> {
 
     for is_minor in [false, true] {
         let profile = if is_minor { &MINOR_PROFILE } else { &MAJOR_PROFILE };
-        for shift in 0..12 {
+        for (shift, root) in NOTE_NAMES.iter().enumerate() {
             let mut score = 0.0;
-            for i in 0..12 {
+            for (i, &p_val) in profile.iter().enumerate().take(12) {
                 let chrom_idx = (i + shift) % 12;
-                score += chromagram[chrom_idx] * profile[i];
+                score += chromagram[chrom_idx] * p_val;
             }
             
             if score > best_score {
                 best_score = score;
-                let root = NOTE_NAMES[shift];
                 best_key = format!("{} {}", root, if is_minor { "Minor" } else { "Major" });
             }
         }

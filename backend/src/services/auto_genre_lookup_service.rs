@@ -118,16 +118,9 @@ pub fn start_scheduler(pool: PgPool) -> Arc<AutoGenreLookupState> {
 
 /// Get one artist with "Unknown" genre and try to detect their actual genre
 async fn process_one_unknown_artist(pool: &PgPool) -> Result<(), String> {
-    // Find the first artist with "Unknown" genre (or no genre) but NOT "NotFound"
+    // Find the first artist whose genre detection is still pending
     let artist: Option<String> = sqlx::query_scalar(
-        r#"
-        SELECT artist_name 
-        FROM artist_genres 
-        WHERE (genre = 'Unknown' OR genre IS NULL)
-        AND genre != 'NotFound'
-        ORDER BY created_at ASC
-        LIMIT 1
-        "#
+        "SELECT artist_name FROM artist_genres WHERE detection_status = 'pending' ORDER BY created_at ASC LIMIT 1"
     )
     .fetch_optional(pool)
     .await
@@ -141,20 +134,21 @@ async fn process_one_unknown_artist(pool: &PgPool) -> Result<(), String> {
 
         // Attempt to detect genre using MusicBrainz
         match super::genre_detection::detect_genre_for_artist(&db, artist_name.clone()).await {
-            Ok(Some(genre)) => {
-                log::info!("Auto-detected genre for {}: {}", artist_name, genre);
-                // The genre_detection service already caches it
+            Ok(Some(genre_id)) => {
+                log::info!("Auto-detected genre_id {:?} for {}", genre_id, artist_name);
+                // genre_detection already cached the genre_id; now propagate to tracks
+                let db = Database { pool: pool.clone() };
+                if let Err(e) = super::genre_label_service::assign_genre_to_artist_tracks(
+                    &db, &artist_name, genre_id,
+                ).await {
+                    log::warn!("Failed to assign genre to tracks for {}: {:?}", artist_name, e);
+                }
             }
             Ok(None) => {
                 log::debug!("No genre found for artist: {}", artist_name);
-                // Mark as NotFound to avoid retrying constantly
-                if let Err(e) = sqlx::query(
-                    "UPDATE artist_genres SET genre = 'NotFound' WHERE artist_name = $1"
-                )
-                .bind(&artist_name)
-                .execute(pool)
-                .await {
-                    log::warn!("Failed to mark {} as NotFound: {}", artist_name, e);
+                let db = Database { pool: pool.clone() };
+                if let Err(e) = super::genre_cache_service::mark_not_found(&db, &artist_name).await {
+                    log::warn!("Failed to mark {} as not_found: {:?}", artist_name, e);
                 }
             }
             Err(e) => {

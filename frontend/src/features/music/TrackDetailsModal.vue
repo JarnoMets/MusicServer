@@ -37,11 +37,11 @@ const showPlaylistPicker = ref(false)
 
 const effectiveGenre = computed(() => {
   if (!props.track) return null
-  return props.track.genre || props.track.guessed_genre || null
+  return props.track.genre_name || null
 })
 
 const isGuessedGenre = computed(() => {
-  return props.track && !props.track.genre && props.track.guessed_genre
+  return props.track && props.track.genre_source === 'auto'
 })
 
 const releaseYear = computed(() => {

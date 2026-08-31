@@ -57,3 +57,17 @@ sha256token
 client_secret_*.json
 all_tracks.json
 fix_labels.txt
+fix_duplicate_titles.log
+json,random,urllib.parse,requests,time,sys
+
+# Environment/User specific files
+.bash_profile
+.bashrc
+.gitconfig
+.profile
+.ripgreprc
+.zprofile
+.zshrc
+.idea/
+.vscode/
+.mcp.json

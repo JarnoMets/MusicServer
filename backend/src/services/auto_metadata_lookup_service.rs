@@ -13,6 +13,12 @@ pub struct AutoMetadataLookupState {
     pub should_stop: Arc<AtomicBool>,
 }
 
+impl Default for AutoMetadataLookupState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutoMetadataLookupState {
     pub fn new() -> Self {
         Self {
