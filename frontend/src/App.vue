@@ -16,10 +16,6 @@
             </router-link>
             
             <div class="nav-section">
-              <router-link to="/" class="sidebar-item">
-                <Icon name="home" :size="24" />
-                <span>Home</span>
-              </router-link>
               <router-link to="/" class="sidebar-item" :class="{ 'active': $route.name === 'browse' }">
                 <Icon name="disc" :size="24" />
                 <span>Library</span>
@@ -112,10 +108,6 @@
 
       <!-- Mobile Bottom Nav -->
       <nav class="mobile-nav show-md">
-        <router-link to="/" class="mobile-nav-item">
-          <Icon name="home" :size="24" />
-          <span>Home</span>
-        </router-link>
         <router-link to="/" class="mobile-nav-item">
           <Icon name="disc" :size="24" />
           <span>Library</span>
@@ -264,6 +256,14 @@ onMounted(() => {
   color: white;
 }
 
+.sidebar-item:focus-visible,
+.nav-btn:focus-visible,
+.user-profile:focus-visible,
+.mobile-nav-item:focus-visible {
+  outline: 2px solid var(--spotify-green);
+  outline-offset: 2px;
+}
+
 .sidebar-item svg {
   color: inherit;
 }
@@ -342,6 +342,15 @@ onMounted(() => {
   cursor: pointer;
 }
 
+.nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -361,6 +370,10 @@ onMounted(() => {
   border-radius: 20px;
   cursor: pointer;
   transition: transform 0.1s;
+}
+
+.user-profile:focus-visible {
+  transform: scale(1.02);
 }
 
 .user-profile:hover {
@@ -479,6 +492,14 @@ onMounted(() => {
 
 .mobile-nav-item.router-link-active {
   color: white;
+}
+
+.mobile-nav-item {
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.mobile-nav-item:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .mobile-admin-overlay {

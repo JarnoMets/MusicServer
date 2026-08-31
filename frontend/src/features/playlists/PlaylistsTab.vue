@@ -23,23 +23,23 @@
             </div>
           </div>
           <div v-if="canEdit" class="detail-actions">
-            <button class="btn btn-queue" @click="handleAddAllToQueue" :disabled="loadingDetail || !selectedPlaylist?.items?.length">
+            <button class="btn btn-queue" type="button" @click="handleAddAllToQueue" :disabled="loadingDetail || !selectedPlaylist?.items?.length">
               <Icon name="plus-circle" :size="16" />
               Add All to DJ Queue
             </button>
-            <button class="btn btn-secondary" @click="exportPlaylist('zip')" :disabled="loadingDetail || !selectedPlaylist?.items?.length">
+            <button class="btn btn-secondary" type="button" @click="exportPlaylist('zip')" :disabled="loadingDetail || !selectedPlaylist?.items?.length">
               <Icon name="download" :size="16" />
               Export ZIP
             </button>
-            <button class="btn btn-secondary" @click="exportPlaylist('rekordbox')" :disabled="loadingDetail || !selectedPlaylist?.items?.length">
+            <button class="btn btn-secondary" type="button" @click="exportPlaylist('rekordbox')" :disabled="loadingDetail || !selectedPlaylist?.items?.length">
               <Icon name="download" :size="16" />
               Rekordbox
             </button>
-            <button class="btn btn-secondary" @click="editPlaylist(selectedPlaylist)">
+            <button class="btn btn-secondary" type="button" @click="editPlaylist(selectedPlaylist)">
               <Icon name="edit" :size="16" />
               Edit
             </button>
-            <button class="btn btn-danger" @click="confirmDeletePlaylist(selectedPlaylist.id, selectedPlaylist.name)">
+            <button class="btn btn-danger" type="button" @click="confirmDeletePlaylist(selectedPlaylist.id, selectedPlaylist.name)">
               <Icon name="trash" :size="16" />
               Delete
             </button>
@@ -71,12 +71,16 @@
                 <div 
                   class="track-row"
                   @contextmenu.prevent="handleContextMenu(track, $event)"
+                  role="button"
+                  tabindex="0"
+                  @keydown.enter.prevent="playTrack(track)"
+                  @keydown.space.prevent="playTrack(track)"
                 >
                   <div v-if="canEdit" class="drag-handle" title="Drag to reorder">
                     <Icon name="more-vertical" :size="16" />
                   </div>
                   <span class="track-number">{{ index + 1 }}</span>
-                  <button class="track-play" @click="playTrack(track)">
+                  <button class="track-play" type="button" @click="playTrack(track)">
                     <Icon name="play" :size="16" />
                   </button>
                   <div class="track-info">
@@ -87,6 +91,7 @@
                   <button 
                     v-if="canEdit"
                     class="btn-icon danger" 
+                    type="button"
                     @click="removeTrack(track.id)"
                     title="Remove from playlist"
                   >
@@ -114,7 +119,7 @@
                 type="text" 
                 placeholder="Search playlists..."
               />
-              <button v-if="searchQuery" class="clear-search" @click="searchQuery = ''">
+              <button v-if="searchQuery" class="clear-search" type="button" @click="searchQuery = ''" title="Clear search">
                 <Icon name="x" :size="14" />
               </button>
             </div>
@@ -128,10 +133,29 @@
                 <option value="name-desc">Name (Z-A)</option>
               </select>
             </div>
-            <button v-if="canEdit" @click="showCreateForm = true" class="btn btn-primary">
+            <button v-if="canEdit" @click="showCreateForm = true" class="btn btn-primary" type="button">
               <Icon name="plus" :size="16" /> New Playlist
             </button>
           </div>
+        </div>
+
+        <div class="results-summary">
+          <span class="summary-chip">
+            <Icon name="list" :size="14" />
+            {{ allPlaylists.length }} total playlists
+          </span>
+          <span class="summary-chip">
+            <Icon name="search" :size="14" />
+            {{ filteredPlaylists.length }} shown
+          </span>
+          <span class="summary-chip">
+            <Icon name="disc" :size="14" />
+            {{ visibleTracksCount }} tracks in view
+          </span>
+          <span class="summary-chip" v-if="editablePlaylistCount">
+            <Icon name="edit" :size="14" />
+            {{ editablePlaylistCount }} editable
+          </span>
         </div>
 
         <div v-if="loading && !filteredPlaylists.length" class="loading-grid">
@@ -140,11 +164,16 @@
 
         <div v-else-if="filteredPlaylists.length" class="playlists-grid">
           <article 
-            v-for="playlist in filteredPlaylists" 
+            v-for="(playlist, index) in filteredPlaylists" 
             :key="playlist.id" 
             class="playlist-card"
             @click="openPlaylistDetail(playlist.id)"
+            @keydown.enter.prevent="openPlaylistDetail(playlist.id)"
+            @keydown.space.prevent="openPlaylistDetail(playlist.id)"
+            role="button"
+            tabindex="0"
           >
+            <span class="playlist-rank">#{{ index + 1 }}</span>
             <div class="playlist-header">
               <div class="playlist-icon">
                 <Icon name="list" :size="24" />
@@ -154,10 +183,10 @@
                 <span class="playlist-date">Created {{ playlist.created_at ? formatDate(playlist.created_at) : 'Unknown' }}</span>
               </div>
               <div v-if="canEdit" class="playlist-actions" @click.stop>
-                <button class="btn-icon" @click="editPlaylist(playlist)" title="Edit">
+                <button class="btn-icon" type="button" @click="editPlaylist(playlist)" title="Edit">
                   <Icon name="edit" :size="16" />
                 </button>
-                <button class="btn-icon danger" @click="confirmDeletePlaylist(playlist.id, playlist.name)" title="Delete">
+                <button class="btn-icon danger" type="button" @click="confirmDeletePlaylist(playlist.id, playlist.name)" title="Delete">
                   <Icon name="trash" :size="16" />
                 </button>
               </div>
@@ -179,7 +208,7 @@
           <h3>No playlists yet</h3>
           <p v-if="canEdit">Create your first playlist to start organizing your music</p>
           <p v-else>Login to create and manage playlists</p>
-          <button v-if="canEdit" @click="showCreateForm = true" class="btn btn-primary">
+          <button v-if="canEdit" @click="showCreateForm = true" class="btn btn-primary" type="button">
             <Icon name="plus" :size="16" /> Create Your First Playlist
           </button>
         </div>
@@ -193,7 +222,7 @@
           <div class="modal" @click.stop>
             <div class="modal-header">
               <h3>{{ editingPlaylist ? 'Edit Playlist' : 'Create New Playlist' }}</h3>
-              <button class="modal-close" @click="closeForm">
+              <button class="modal-close" type="button" @click="closeForm">
                 <Icon name="x" :size="20" />
               </button>
             </div>
@@ -484,6 +513,14 @@ const filteredPlaylists = computed(() => {
   }
 })
 
+const visibleTracksCount = computed(() => {
+  return filteredPlaylists.value.reduce((sum, playlist) => sum + (playlist.track_count || 0), 0)
+})
+
+const editablePlaylistCount = computed(() => {
+  return canEdit.value ? filteredPlaylists.value.length : 0
+})
+
 const fetchPlaylists = async () => {
   try {
     loading.value = true
@@ -693,6 +730,26 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.results-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 
 .search-box {
@@ -743,9 +800,19 @@ onMounted(() => {
   background: var(--surface-hover);
 }
 
+.clear-search:focus-visible,
+.sort-select:focus-visible,
+.btn:focus-visible,
+.btn-icon:focus-visible,
+.btn-back:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
 .sort-controls {
   display: flex;
   align-items: center;
+  min-width: 170px;
 }
 
 .sort-select {
@@ -843,6 +910,7 @@ onMounted(() => {
 .detail-actions {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 /* Loading tracks */
@@ -919,6 +987,12 @@ onMounted(() => {
   background: var(--surface-hover);
 }
 
+.track-row:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: -2px;
+  background: var(--surface-hover);
+}
+
 .drag-handle {
   display: flex;
   align-items: center;
@@ -975,6 +1049,11 @@ onMounted(() => {
 .track-play:hover {
   transform: scale(1.1);
   box-shadow: 0 4px 12px var(--primary-glow, rgba(139, 92, 246, 0.3));
+}
+
+.track-play:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 .track-info {
@@ -1101,6 +1180,12 @@ onMounted(() => {
   background: var(--surface-muted);
 }
 
+.btn-icon:focus-visible {
+  background: var(--surface-muted);
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
 .btn-icon.danger {
   color: var(--text-secondary);
 }
@@ -1158,12 +1243,27 @@ onMounted(() => {
   padding: 20px;
   transition: all 0.2s ease;
   cursor: pointer;
+  position: relative;
 }
 
 .playlist-card:hover {
   border-color: var(--primary-color);
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.playlist-card:focus-visible {
+  border-color: var(--primary-color);
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.playlist-rank {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
 }
 
 .playlist-header {
@@ -1365,5 +1465,64 @@ onMounted(() => {
 
 .modal-enter-from .modal, .modal-leave-to .modal {
   transform: scale(0.95) translateY(20px);
+}
+
+@media (max-width: 900px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+
+  .search-box {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .sort-controls {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .header-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .results-summary {
+    gap: 6px;
+  }
+
+  .summary-chip {
+    font-size: 0.75rem;
+  }
+
+  .playlists-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-title-section {
+    flex-direction: column;
+  }
+
+  .detail-actions {
+    flex-direction: column;
+  }
+
+  .track-row {
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .track-number {
+    display: none;
+  }
+
+  .track-duration {
+    margin-left: auto;
+  }
 }
 </style>

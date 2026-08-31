@@ -106,6 +106,25 @@ const formattedTotalDuration = computed(() => {
   return `${mins}m`
 })
 
+const activeFilterCount = computed(() => {
+  return [
+    filters.search.trim(),
+    filters.genre,
+    filters.sort !== 'title',
+    filters.order !== 'asc',
+  ].filter(Boolean).length
+})
+
+const filterSummary = computed(() => {
+  if (!activeFilterCount.value) return 'All tracks'
+  const parts: string[] = []
+  if (filters.search.trim()) parts.push(`Search: "${filters.search.trim()}"`)
+  if (filters.genre) parts.push(filters.genre === 'unconfirmed' ? 'Unconfirmed' : `Genre: ${filters.genre}`)
+  if (filters.sort !== 'title') parts.push(`Sort: ${filters.sort}`)
+  if (filters.order !== 'asc') parts.push(`Order: ${filters.order}`)
+  return parts.join(' • ')
+})
+
 // Track event handlers
 const handlePlayTrack = (track: MusicFile) => {
   playTrack(track)
@@ -325,6 +344,24 @@ const handleEditFormUpdate = {
       @reset="resetFilters"
     />
 
+    <section class="library-summary" aria-label="Library summary">
+      <div class="summary-chip primary">
+        <Icon name="disc" :size="14" />
+        {{ stats.total_count }} tracks
+      </div>
+      <div class="summary-chip">
+        <Icon name="clock" :size="14" />
+        {{ formattedTotalDuration }}
+      </div>
+      <div class="summary-chip">
+        <Icon name="filter" :size="14" />
+        {{ activeFilterCount }} filters active
+      </div>
+      <div class="summary-chip summary-text">
+        {{ filterSummary }}
+      </div>
+    </section>
+
     <!-- Music Table -->
     <MusicTable
       :tracks="musicFiles"
@@ -451,6 +488,36 @@ const handleEditFormUpdate = {
   gap: 24px;
 }
 
+.library-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.summary-chip.primary {
+  background: rgba(30, 215, 96, 0.12);
+  border-color: rgba(30, 215, 96, 0.25);
+  color: var(--text-color);
+}
+
+.summary-text {
+  flex: 1 1 320px;
+}
+
 .sync-indicator {
   display: flex;
   align-items: center;
@@ -537,6 +604,14 @@ const handleEditFormUpdate = {
 
 
 @media (max-width: 900px) {
+  .library-summary {
+    gap: 6px;
+  }
+
+  .summary-chip {
+    font-size: 0.75rem;
+  }
+
   .header {
     flex-direction: column;
     padding: 24px;

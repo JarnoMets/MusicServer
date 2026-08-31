@@ -16,13 +16,14 @@
       
       <div class="autoplay-controls">
         <!-- Settings toggle -->
-        <button class="btn-settings" @click="showAutoplaySettings = !showAutoplaySettings" :class="{ active: showAutoplaySettings }">
+        <button class="btn-settings" type="button" @click="showAutoplaySettings = !showAutoplaySettings" :class="{ active: showAutoplaySettings }">
           <Icon name="settings" :size="14" />
         </button>
 
         <button 
           v-if="store.autoPlayPlaylist.length > 0"
           class="btn-queue"
+          type="button"
           @click="showQueueModal = true"
         >
           <Icon name="list" :size="14" />
@@ -32,6 +33,7 @@
         <button 
           class="btn-autoplay" 
           :class="{ active: store.autoPlay }"
+          type="button"
           @click="toggleAutoplay"
         >
           {{ store.autoPlay ? 'STOP AUTOPLAY' : 'START AUTOPLAY' }}
@@ -263,26 +265,28 @@ const toggleAutoplay = () => {
   flex-direction: column;
   position: relative;
   min-height: 0;
+  gap: 12px;
 }
 
 .autoplay-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
-  background: rgba(0,0,0,0.4);
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-  margin-bottom: 8px;
-  border-radius: 8px;
+  padding: 12px 16px;
+  background: rgba(24, 24, 24, 0.92);
+  border: 1px solid var(--border-color);
+  margin-bottom: 0;
+  border-radius: 18px;
   font-size: 11px;
   font-weight: 700;
-  color: #aaa;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-sm);
 }
 
 .autoplay-bar.active {
-  background: rgba(79, 70, 229, 0.15);
-  border-color: rgba(79, 70, 229, 0.3);
-  color: #fff;
+  background: rgba(30, 215, 96, 0.1);
+  border-color: rgba(30, 215, 96, 0.25);
+  color: var(--text-color);
 }
 
 .status-indicator {
@@ -313,6 +317,8 @@ const toggleAutoplay = () => {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .btn-queue {
@@ -322,8 +328,8 @@ const toggleAutoplay = () => {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #ccc;
-  padding: 4px 10px;
-  border-radius: 4px;
+  padding: 8px 12px;
+  border-radius: 9999px;
   cursor: pointer;
   font-size: 10px;
   transition: all 0.2s;
@@ -344,7 +350,7 @@ const toggleAutoplay = () => {
   color: #888;
   width: 28px;
   height: 28px;
-  border-radius: 4px;
+  border-radius: 9999px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -359,12 +365,14 @@ const toggleAutoplay = () => {
 .autoplay-settings-panel {
   display: flex;
   gap: 24px;
-  padding: 8px 16px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 0 0 8px 8px;
-  margin-top: -8px;
-  margin-bottom: 8px;
+  padding: 16px;
+  background: rgba(24, 24, 24, 0.9);
+  border: 1px solid var(--border-color);
+  border-radius: 18px;
+  margin-top: 0;
+  margin-bottom: 0;
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
 }
 
 .setting-row {
@@ -412,8 +420,8 @@ const toggleAutoplay = () => {
   background: rgba(255,255,255,0.1);
   border: 1px solid rgba(255,255,255,0.2);
   color: white;
-  padding: 4px 12px;
-  border-radius: 20px;
+  padding: 8px 14px;
+  border-radius: 9999px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -433,7 +441,7 @@ const toggleAutoplay = () => {
 .decks-layout {
   display: flex;
   flex: 1;
-  gap: 8px;
+  gap: 12px;
   min-height: 0;
   overflow: hidden;
   padding-bottom: 0;
@@ -443,10 +451,28 @@ const toggleAutoplay = () => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
+}
+
+.btn-settings:focus-visible,
+.btn-queue:focus-visible,
+.btn-autoplay:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1024px) {
+  .autoplay-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .autoplay-controls {
+    justify-content: flex-start;
+  }
 }
 
 
 </style>
-

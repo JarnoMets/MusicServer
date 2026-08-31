@@ -121,16 +121,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="edit-track-container p-6">
-    <div class="flex items-center justify-between mb-6">
+  <div class="edit-track-container page-shell p-6">
+    <div class="edit-track-hero surface-card">
       <div>
-        <h1 class="text-2xl font-bold text-white">Edit Track</h1>
-        <p v-if="track" class="text-gray-400">{{ track.artist }} - {{ track.title }}</p>
+        <p class="page-kicker">Track editor</p>
+        <h1>Edit track</h1>
+        <p v-if="track" class="page-description">{{ track.artist }} — {{ track.title }}</p>
       </div>
       <div class="flex gap-4">
         <button 
           @click="router.back()" 
           class="px-4 py-2 rounded-lg bg-gray-800 text-white hover:bg-gray-700 transition"
+          type="button"
         >
           Cancel
         </button>
@@ -138,6 +140,7 @@ onUnmounted(() => {
           @click="handleCut" 
           :disabled="isProcessing || isLoading"
           class="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          type="button"
         >
           <Icon v-if="isProcessing" name="loader" class="animate-spin" :size="18" />
           {{ isProcessing ? 'Processing...' : 'Apply Cut' }}
@@ -145,14 +148,14 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="bg-gray-900/50 rounded-xl p-6 border border-gray-800">
+    <div class="edit-track-card surface-card">
       <div v-if="isLoading" class="h-32 flex items-center justify-center">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
       </div>
       
       <div ref="waveformContainer" class="mb-4"></div>
       
-      <div class="flex items-center justify-between text-sm text-gray-400 mt-4">
+      <div class="edit-track-meta">
         <div class="flex gap-6">
           <div>
             <span class="block text-xs uppercase tracking-wider text-gray-500 mb-1">Start</span>
@@ -172,6 +175,7 @@ onUnmounted(() => {
           <button 
             @click="togglePlay" 
             class="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center hover:bg-gray-200 transition"
+            type="button"
           >
             <Icon v-if="wavesurfer?.isPlaying()" name="pause" :size="24" />
             <Icon v-else name="play" :size="24" />
@@ -180,7 +184,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="mt-8 bg-gray-800/30 rounded-lg p-4 border border-indigo-500/20">
+    <div class="edit-track-help surface-card">
       <h3 class="text-sm font-semibold text-indigo-300 mb-2 flex items-center gap-2">
         <Icon name="info" :size="16" /> How to use
       </h3>
@@ -200,6 +204,40 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
+.edit-track-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+  padding: 24px;
+}
+
+.edit-track-hero h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.edit-track-card,
+.edit-track-help {
+  padding: 24px;
+}
+
+.edit-track-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  margin-top: 20px;
+}
+
+.edit-track-meta span {
+  color: var(--text-secondary);
+}
+
+.edit-track-card :deep(.wavesurfer-region) {
+  border-radius: 12px;
+}
+
 :deep(.wavesurfer-region) {
   border: 2px solid rgba(79, 70, 229, 0.4) !important;
 }
@@ -207,5 +245,19 @@ onUnmounted(() => {
 :deep(.wavesurfer-handle) {
   width: 10px !important;
   background-color: #4f46e5 !important;
+}
+
+@media (max-width: 768px) {
+  .edit-track-hero,
+  .edit-track-meta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .edit-track-help,
+  .edit-track-card,
+  .edit-track-hero {
+    padding: 20px;
+  }
 }
 </style>

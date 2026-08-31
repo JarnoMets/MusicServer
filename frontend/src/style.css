@@ -181,6 +181,15 @@ button:disabled {
   cursor: not-allowed;
 }
 
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -216,6 +225,13 @@ button:disabled {
   border-color: var(--border-hover);
 }
 
+.btn-secondary:focus-visible,
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible,
+.btn-danger:focus-visible {
+  transform: translateY(-1px);
+}
+
 .btn-ghost {
   background-color: transparent;
   color: var(--text-secondary);
@@ -234,6 +250,61 @@ button:disabled {
 .btn-danger:hover:not(:disabled) {
   background-color: #dc2626;
   transform: translateY(-1px);
+}
+
+.surface-card {
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.page-shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.page-hero {
+  padding: 24px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-color);
+  background: linear-gradient(135deg, rgba(30, 215, 96, 0.14), rgba(18, 18, 18, 0.96) 45%, rgba(24, 24, 24, 0.98));
+  box-shadow: var(--shadow-md);
+}
+
+.page-kicker {
+  margin: 0 0 6px;
+  color: var(--primary-light);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.page-description {
+  margin: 0;
+  color: var(--text-secondary);
+  max-width: 68ch;
+}
+
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 
 /* Form Elements */

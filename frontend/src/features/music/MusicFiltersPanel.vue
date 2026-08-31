@@ -43,6 +43,7 @@ const pageSizeOptions = [25, 50, 100, 250]
         <button 
           v-if="filters.search" 
           class="clear-btn"
+          type="button"
           @click="emit('update:search', '')"
           title="Clear search"
         >
@@ -81,7 +82,7 @@ const pageSizeOptions = [25, 50, 100, 250]
     </div>
 
     <div class="filter-actions">
-      <button class="reset-btn" @click="emit('reset')" title="Reset all filters">
+      <button class="reset-btn" type="button" @click="emit('reset')" title="Reset all filters">
         <Icon name="refresh-cw" :size="14" /> Reset
       </button>
     </div>
@@ -177,6 +178,12 @@ const pageSizeOptions = [25, 50, 100, 250]
 .clear-btn:hover {
   background: var(--error-color);
   color: white;
+}
+
+.clear-btn:focus-visible,
+.reset-btn:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 .select-input {

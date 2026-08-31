@@ -46,6 +46,7 @@ const selectedIds = ref<Set<string>>(new Set())
 const lastSelectedIndex = ref<number | null>(null)
 
 const isSelected = (track: MusicFile) => selectedIds.value.has(track.id)
+const selectedCount = computed(() => selectedIds.value.size)
 
 // Clear selection when tracks change (keep only valid ids)
 watch(
@@ -147,6 +148,16 @@ const handleSort = (
   emit('update:order', sortOrder.value)
 }
 
+const handleSortKeydown = (
+  column: 'title' | 'artist' | 'album' | 'genre' | 'created_at' | 'updated_at' | 'release_date' | 'duration' | 'bpm',
+  event: KeyboardEvent,
+) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    handleSort(column)
+  }
+}
+
 const onGlobalClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement
   if (!target.closest('.music-table')) {
@@ -218,52 +229,56 @@ onUnmounted(() => {
       <p>No tracks match your filters.</p>
       <button class="btn btn-outline" @click="emit('reset')">Reset filters</button>
     </div>
+    <div v-if="tracks.length > 0" class="table-summary">
+      <span>{{ displayTracks.length }} tracks shown</span>
+      <span v-if="selectedCount">{{ selectedCount }} selected</span>
+    </div>
     <table v-else class="music-table">
       <thead>
         <tr>
-          <th class="sortable" @click="handleSort('title')">
+          <th class="sortable" @click="handleSort('title')" @keydown="handleSortKeydown('title', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>Title</span>
               <Icon v-if="sortKey === 'title'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
             </div>
           </th>
-          <th class="sortable" @click="handleSort('artist')">
+          <th class="sortable" @click="handleSort('artist')" @keydown="handleSortKeydown('artist', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>Artist</span>
               <Icon v-if="sortKey === 'artist'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
             </div>
           </th>
-          <th class="sortable" @click="handleSort('album')">
+          <th class="sortable" @click="handleSort('album')" @keydown="handleSortKeydown('album', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>Album</span>
               <Icon v-if="sortKey === 'album'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
             </div>
           </th>
-          <th class="sortable" @click="handleSort('release_date')">
+          <th class="sortable" @click="handleSort('release_date')" @keydown="handleSortKeydown('release_date', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>Year</span>
               <Icon v-if="sortKey === 'release_date'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
             </div>
           </th>
-          <th class="sortable" @click="handleSort('genre')">
+          <th class="sortable" @click="handleSort('genre')" @keydown="handleSortKeydown('genre', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>Genre</span>
               <Icon v-if="sortKey === 'genre'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
             </div>
           </th>
-          <th class="sortable" @click="handleSort('created_at')">
+          <th class="sortable" @click="handleSort('created_at')" @keydown="handleSortKeydown('created_at', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>Added</span>
               <Icon v-if="sortKey === 'created_at'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
             </div>
           </th>
-          <th class="sortable" @click="handleSort('duration')">
+          <th class="sortable" @click="handleSort('duration')" @keydown="handleSortKeydown('duration', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>Duration</span>
               <Icon v-if="sortKey === 'duration'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
             </div>
           </th>
-          <th class="sortable" @click="handleSort('bpm')">
+          <th class="sortable" @click="handleSort('bpm')" @keydown="handleSortKeydown('bpm', $event)" tabindex="0" role="button">
             <div class="header-content">
               <span>BPM</span>
               <Icon v-if="sortKey === 'bpm'" :name="sortOrder === 'asc' ? 'chevron-up' : 'chevron-down'" :size="12" class="sort-icon" />
@@ -284,6 +299,9 @@ onUnmounted(() => {
           @dblclick="handleRowDoubleClick(track)"
           @contextmenu="handleContextMenu(track, $event)"
           tabindex="0"
+          :aria-selected="isSelected(track)"
+          @keydown.enter.prevent="handleTogglePlay(track)"
+          @keydown.space.prevent="handleTogglePlay(track)"
         >
           <td :data-artist="track.artist || 'Unknown Artist'">
             <div class="title-cell">
@@ -293,7 +311,7 @@ onUnmounted(() => {
                 <span :class="['bar', { animating: isPlaying }]"></span>
               </div>
               <div>
-                <button class="title-link" @click="handleTitleClick(track, $event)">{{ track.title }}</button>
+                <button class="title-link" type="button" @click="handleTitleClick(track, $event)">{{ track.title }}</button>
                 <div class="mobile-artist">{{ track.artist || 'Unknown Artist' }}</div>
               </div>
             </div>
@@ -337,6 +355,7 @@ onUnmounted(() => {
               <div class="playlist-menu">
                 <button
                   class="btn-icon"
+                  type="button"
                   @click.stop="emit('playlist:toggle', track.id)"
                   title="Manage playlists"
                 >
@@ -348,14 +367,15 @@ onUnmounted(() => {
                     v-for="playlist in playlists"
                     :key="playlist.id"
                     @click.stop="emit('playlist:add', track.id, playlist.id)"
+                    type="button"
                   >
                     {{ playlist.name }}
                   </button>
                   <p v-if="!playlists.length">Create a playlist first</p>
                 </div>
               </div>
-              <button class="btn-icon" @click.stop="emit('track:edit', track)" title="Edit metadata"><Icon name="edit" :size="16" /></button>
-              <button class="btn-icon danger" @click.stop="emit('track:delete', track)" title="Delete"><Icon name="trash" :size="16" /></button>
+              <button class="btn-icon" type="button" @click.stop="emit('track:edit', track)" title="Edit metadata"><Icon name="edit" :size="16" /></button>
+              <button class="btn-icon danger" type="button" @click.stop="emit('track:delete', track)" title="Delete"><Icon name="trash" :size="16" /></button>
             </template>
           </td>
         </tr>
@@ -381,6 +401,19 @@ onUnmounted(() => {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   position: relative;
   min-height: 400px; /* Prevent layout collapse during refreshes */
+}
+
+.table-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: var(--background-elevated);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .music-container.is-loading .music-table {
@@ -535,6 +568,15 @@ onUnmounted(() => {
   color: var(--text-color);
 }
 
+.music-table th.sortable:focus-visible,
+.music-row:focus-visible,
+.title-link:focus-visible,
+.btn-icon:focus-visible,
+.btn-outline:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: -2px;
+}
+
 .header-content {
   display: flex;
   align-items: center;
@@ -648,6 +690,12 @@ onUnmounted(() => {
 }
 
 .title-link:hover {
+  color: var(--primary-light);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.title-link:focus-visible {
   color: var(--primary-light);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -770,6 +818,11 @@ onUnmounted(() => {
   border-color: var(--primary-color);
   transform: scale(1.08);
   box-shadow: 0 4px 12px var(--primary-glow);
+}
+
+.btn-icon:focus-visible {
+  background: var(--primary-glow);
+  border-color: var(--primary-color);
 }
 
 .btn-icon.play-btn {

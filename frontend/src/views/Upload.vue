@@ -9,18 +9,37 @@
         </p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-secondary" :disabled="!hasCompleted" @click="clearCompleted">
+        <button class="btn btn-secondary" type="button" :disabled="!hasCompleted" @click="clearCompleted">
           Clear completed
         </button>
-        <button class="btn btn-primary" :disabled="!canUpload || uploading" @click="startUpload">
+        <button class="btn btn-primary" type="button" :disabled="!canUpload || uploading" @click="startUpload">
           {{ uploading ? 'Uploading&hellip;' : 'Start upload' }}
         </button>
       </div>
     </header>
 
+    <section class="summary-row">
+      <div class="summary-pill">
+        <Icon name="disc" :size="14" />
+        {{ queueCount }} queued
+      </div>
+      <div class="summary-pill">
+        <Icon name="upload" :size="14" />
+        {{ uploadingCount }} uploading
+      </div>
+      <div class="summary-pill">
+        <Icon name="check" :size="14" />
+        {{ successCount }} completed
+      </div>
+      <div class="summary-pill">
+        <Icon name="x" :size="14" />
+        {{ errorCount }} errors
+      </div>
+    </section>
+
     <!-- Collapsible file picker section -->
     <section class="picker-section">
-      <button class="picker-toggle" @click="isPickerOpen = !isPickerOpen">
+      <button class="picker-toggle" type="button" @click="isPickerOpen = !isPickerOpen">
         <Icon :name="isPickerOpen ? 'chevron-down' : 'chevron-right'" :size="18" />
         <span>Add files</span>
         <span class="toggle-hint">(Drag & drop or browse)</span>
@@ -54,7 +73,7 @@
               <Icon name="upload" :size="40" class="drop-icon" />
               <h2>Drag files here</h2>
               <p>Or use the picker above</p>
-              <button class="btn btn-secondary" @click="triggerFileDialog">Browse files</button>
+              <button class="btn btn-secondary" type="button" @click="triggerFileDialog">Browse files</button>
             </div>
           </section>
         </div>
@@ -221,10 +240,10 @@ function itemStatusLabel(status: string) {
   justify-content: space-between;
   gap: 24px;
   padding: 28px;
-  border-radius: 16px;
+  border-radius: 24px;
   border: 1px solid var(--border-color);
-  background: linear-gradient(145deg, var(--primary-glow), var(--surface-color));
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+  background: linear-gradient(145deg, rgba(30, 215, 96, 0.16), rgba(18, 18, 18, 0.96));
+  box-shadow: var(--shadow-md);
 }
 
 .eyebrow {
@@ -256,6 +275,25 @@ function itemStatusLabel(status: string) {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
+}
+
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 
 .btn {
@@ -344,6 +382,12 @@ function itemStatusLabel(status: string) {
 
 .picker-toggle:hover {
   background: var(--background-elevated);
+}
+
+.picker-toggle:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 .toggle-hint {
@@ -499,10 +543,10 @@ function itemStatusLabel(status: string) {
 
 .queue {
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: 20px;
   background: var(--surface-color);
   overflow: hidden;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-sm);
 }
 
 .queue__header {
@@ -685,6 +729,7 @@ function itemStatusLabel(status: string) {
   .upload-header {
     flex-direction: column;
     padding: 20px;
+    border-radius: 20px;
   }
 
   .header-actions {
@@ -701,6 +746,14 @@ function itemStatusLabel(status: string) {
 
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .summary-row {
+    gap: 6px;
+  }
+
+  .summary-pill {
+    font-size: 0.75rem;
   }
 
   .queue-item {

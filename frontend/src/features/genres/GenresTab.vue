@@ -123,7 +123,7 @@
               placeholder="Search genres..."
               @input="debouncedSearch"
             />
-            <button v-if="searchQuery" class="clear-search" @click="clearSearch">
+            <button v-if="searchQuery" class="clear-search" @click="clearSearch" title="Clear search">
               <Icon name="x" :size="14" />
             </button>
           </div>
@@ -147,6 +147,20 @@
           </div>
         </div>
       </div>
+      <div class="results-summary">
+        <span class="summary-chip">
+          <Icon name="tag" :size="14" />
+          {{ genres.length }} total genres
+        </span>
+        <span class="summary-chip">
+          <Icon name="search" :size="14" />
+          {{ filteredGenres.length }} shown
+        </span>
+        <span class="summary-chip">
+          <Icon name="disc" :size="14" />
+          {{ visibleTracksCount }} tracks in view
+        </span>
+      </div>
 
       <!-- Loading State -->
       <div v-if="loading" class="loading-grid">
@@ -164,12 +178,17 @@
         <div v-if="loadingSilent" class="loading-progress"></div>
         <div class="genre-grid">
           <div
-            v-for="genre in filteredGenres"
+            v-for="(genre, index) in filteredGenres"
             :key="genre.name"
             class="genre-card"
             @click="selectGenre(genre)"
             @contextmenu.prevent="openContextMenu(genre, $event)"
+            @keydown.enter.prevent="selectGenre(genre)"
+            @keydown.space.prevent="selectGenre(genre)"
+            role="button"
+            tabindex="0"
           >
+            <span class="genre-rank">#{{ index + 1 }}</span>
             <div class="genre-card-icon">
               <Icon name="tag" :size="20" />
             </div>
@@ -286,6 +305,10 @@ const filteredGenres = computed(() => {
     default:
       return sorted
   }
+})
+
+const visibleTracksCount = computed(() => {
+  return filteredGenres.value.reduce((sum, genre) => sum + (genre.track_count || 0), 0)
 })
 
 const isTrackPlaying = (track: MusicFile) => {
@@ -463,6 +486,25 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.results-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  background: var(--surface-muted);
+  border-radius: 9999px;
+  padding: 6px 10px;
 }
 
 .search-box {
@@ -502,6 +544,26 @@ onMounted(() => {
   cursor: pointer;
 }
 
+.sort-controls {
+  min-width: 170px;
+}
+
+.clear-search {
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.clear-search:hover {
+  background: var(--surface-muted);
+  color: var(--text-color);
+}
+
 .admin-actions {
   display: flex;
   gap: 8px;
@@ -531,6 +593,20 @@ onMounted(() => {
   border-color: var(--primary-color);
   transform: translateY(-2px);
   background: var(--surface-hover);
+}
+
+.genre-card:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-color: var(--primary-color);
+}
+
+.genre-rank {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
 }
 
 .genre-card-icon {
@@ -605,6 +681,16 @@ onMounted(() => {
   cursor: pointer;
   padding: 4px 0;
   width: fit-content;
+}
+
+.btn-back:hover {
+  color: var(--text-color);
+}
+
+.btn-back:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .detail-title-section {
@@ -775,6 +861,32 @@ onMounted(() => {
   color: #ef4444;
 }
 
+.loading-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.empty-state {
+  border: 1px dashed var(--border-color);
+  border-radius: 16px;
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.empty-state h3 {
+  margin: 0;
+}
+
+.empty-state p {
+  margin: 0;
+}
+
 .skeleton-card {
   background: var(--surface-color);
   border: 1px solid var(--border-color);
@@ -858,6 +970,45 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-actions {
+    flex-direction: column;
+  }
+
+  .results-summary {
+    gap: 6px;
+  }
+
+  .summary-chip {
+    font-size: 0.75rem;
+  }
+
+  .search-box {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .sort-controls {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .admin-actions {
+    width: 100%;
+  }
+
+  .admin-actions .btn {
+    flex: 1;
+  }
+
+  .genre-grid {
+    grid-template-columns: 1fr;
+  }
+
   .detail-title-section {
     flex-direction: column;
     text-align: center;

@@ -29,10 +29,13 @@ const handleGoogleLogin = () => {
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
         </svg>
-        <h1>Music Server</h1>
+        <div>
+          <p class="page-kicker">Music Server</p>
+          <h1>Sign in</h1>
+        </div>
       </div>
       
-      <p class="subtitle">Sign in to manage your music library</p>
+      <p class="subtitle">Manage your library, playlists, genres, and DJ decks from one place.</p>
 
       <div v-if="authStore.error" class="error-message">
         {{ authStore.error }}
@@ -43,6 +46,7 @@ const handleGoogleLogin = () => {
         @click="handleGoogleLogin" 
         class="login-button google-btn"
         :disabled="authStore.loading"
+        type="button"
       >
         <svg class="google-icon" viewBox="0 0 24 24">
           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -59,7 +63,7 @@ const handleGoogleLogin = () => {
       </div>
 
       <div class="footer">
-        <p>&copy; {{ new Date().getFullYear() }} Music Server</p>
+        <p>Fast browsing. Better playlists. Cleaner library management.</p>
       </div>
     </div>
   </div>
@@ -71,16 +75,18 @@ const handleGoogleLogin = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #121212 0%, #1e1e1e 100%);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(30, 215, 96, 0.12), transparent 35%),
+    linear-gradient(135deg, #121212 0%, #080808 100%);
   color: white;
   padding: 1rem;
 }
 
 .login-card {
-  background: rgba(40, 40, 40, 0.8);
+  background: rgba(24, 24, 24, 0.9);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
+  border-radius: 24px;
   padding: 3rem 2rem;
   width: 100%;
   max-width: 440px;
@@ -102,6 +108,13 @@ const handleGoogleLogin = () => {
   margin-bottom: 1rem;
 }
 
+.logo div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
 .logo h1 {
   font-size: 2rem;
   font-weight: 800;
@@ -111,8 +124,9 @@ const handleGoogleLogin = () => {
 
 .subtitle {
   color: #b3b3b3;
-  font-size: 1.1rem;
+  font-size: 1rem;
   margin-bottom: 2.5rem;
+  line-height: 1.6;
 }
 
 .error-message {
@@ -128,7 +142,7 @@ const handleGoogleLogin = () => {
 .login-button {
   width: 100%;
   padding: 0.9rem;
-  border-radius: 50px;
+  border-radius: 9999px;
   border: none;
   font-size: 1rem;
   font-weight: 700;
@@ -189,6 +203,11 @@ const handleGoogleLogin = () => {
   margin-top: 3rem;
   color: #535353;
   font-size: 0.8rem;
+}
+
+.google-btn:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 @media (max-width: 480px) {

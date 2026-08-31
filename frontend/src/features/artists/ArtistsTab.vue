@@ -179,7 +179,7 @@
               placeholder="Search artists..."
               @input="debouncedSearch"
             />
-            <button v-if="searchQuery" class="clear-search" @click="clearSearch">
+            <button v-if="searchQuery" class="clear-search" @click="clearSearch" title="Clear search">
               <Icon name="x" :size="14" />
             </button>
           </div>
@@ -192,6 +192,24 @@
             </select>
           </div>
         </div>
+      </div>
+      <div class="results-summary">
+        <span class="summary-chip">
+          <Icon name="users" :size="14" />
+          {{ store.artists.length }} total artists
+        </span>
+        <span class="summary-chip">
+          <Icon name="search" :size="14" />
+          {{ filteredArtists.length }} shown
+        </span>
+        <span class="summary-chip">
+          <Icon name="disc" :size="14" />
+          {{ visibleTracksCount }} tracks in view
+        </span>
+        <span class="summary-chip" v-if="artistsWithoutGenreCount > 0">
+          <Icon name="tag" :size="14" />
+          {{ artistsWithoutGenreCount }} without genre
+        </span>
       </div>
 
       <!-- Loading State -->
@@ -208,11 +226,16 @@
       <!-- Artists Grid -->
       <div v-else-if="filteredArtists.length" class="artists-grid">
         <article 
-          v-for="artist in filteredArtists" 
+          v-for="(artist, index) in filteredArtists" 
           :key="artist.name" 
           class="artist-card"
           @click="openArtistDetail(artist)"
+          @keydown.enter.prevent="openArtistDetail(artist)"
+          @keydown.space.prevent="openArtistDetail(artist)"
+          role="button"
+          tabindex="0"
         >
+          <span class="artist-rank">#{{ index + 1 }}</span>
           <div class="artist-avatar">
             <span>{{ getInitials(artist.name) }}</span>
           </div>
@@ -548,6 +571,14 @@ const filteredArtists = computed(() => {
   )
 })
 
+const visibleTracksCount = computed(() => {
+  return filteredArtists.value.reduce((sum, artist) => sum + artist.song_count, 0)
+})
+
+const artistsWithoutGenreCount = computed(() => {
+  return store.artists.filter(artist => !artist.genre?.trim()).length
+})
+
 // Sort artists based on selected sort option
 const sortedArtists = computed(() => {
   const list = [...store.artists]
@@ -796,6 +827,25 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.results-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  background: var(--surface-muted);
+  border-radius: 9999px;
+  padding: 6px 10px;
 }
 
 .search-box {
@@ -835,6 +885,26 @@ onMounted(() => {
   cursor: pointer;
 }
 
+.clear-search {
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.clear-search:hover {
+  background: var(--surface-muted);
+  color: var(--text-color);
+}
+
+.sort-controls {
+  min-width: 170px;
+}
+
 /* Artists Grid */
 .artists-grid {
   display: grid;
@@ -852,12 +922,27 @@ onMounted(() => {
   gap: 16px;
   transition: all 0.2s ease;
   cursor: pointer;
+  position: relative;
 }
 
 .artist-card:hover {
   border-color: var(--primary-color);
   transform: translateY(-2px);
   background: var(--surface-hover);
+}
+
+.artist-card:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-color: var(--primary-color);
+}
+
+.artist-rank {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
 }
 
 .artist-avatar {
@@ -911,6 +996,19 @@ onMounted(() => {
   font-weight: 500;
 }
 
+.no-genre-badge {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--text-secondary);
+  padding: 1px 8px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.track-count {
+  color: var(--text-tertiary);
+}
+
 .view-icon {
   color: var(--text-tertiary);
   opacity: 0;
@@ -946,6 +1044,16 @@ onMounted(() => {
   cursor: pointer;
   padding: 4px 0;
   width: fit-content;
+}
+
+.btn-back:hover {
+  color: var(--text-color);
+}
+
+.btn-back:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .detail-title-section {
@@ -1079,6 +1187,71 @@ onMounted(() => {
   font-family: monospace;
 }
 
+.loading-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.skeleton-card {
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.skeleton-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--surface-muted);
+}
+
+.skeleton-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeleton {
+  background: var(--surface-muted);
+  border-radius: 9999px;
+}
+
+.skeleton-name {
+  width: 62%;
+  height: 14px;
+}
+
+.skeleton-meta {
+  width: 35%;
+  height: 12px;
+}
+
+.empty-state {
+  border: 1px dashed var(--border-color);
+  border-radius: 16px;
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.empty-state h3 {
+  margin: 0;
+}
+
+.empty-state p {
+  margin: 0;
+}
+
 /* Modal */
 .modal-overlay {
   position: fixed;
@@ -1152,9 +1325,21 @@ onMounted(() => {
     flex-direction: column;
   }
 
+  .results-summary {
+    gap: 6px;
+  }
+
+  .summary-chip {
+    font-size: 0.75rem;
+  }
+
   .search-box {
     min-width: unset;
     width: 100%;
+  }
+
+  .sort-controls {
+    min-width: unset;
   }
 
   .artists-grid {
