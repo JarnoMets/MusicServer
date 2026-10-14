@@ -1,0 +1,83 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: demo-strip-music
+  namespace: music
+spec:
+  stripPrefix:
+    prefixes:
+      - /music
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: demo-readonly-header
+  namespace: music
+spec:
+  headers:
+    customRequestHeaders:
+      X-Demo-Readonly: "true"
+---
+# Relative Vite assets (./assets/…) break at /music without a trailing slash.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: demo-slash-music
+  namespace: music
+spec:
+  redirectRegex:
+    regex: ^(https?)://([^/]+)/music$
+    replacement: ${1}://${2}/music/
+    permanent: true
+# TLS secret demo-jarnomets-tls is issued in the about namespace and copied here.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: demo-music
+  namespace: music
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # Read-only API (SSO stub + browse / stream)
+    - match: Host(`demo.jarnomets.com`) && PathPrefix(`/music/api`) && Method(`GET`, `HEAD`, `OPTIONS`)
+      kind: Rule
+      priority: 50
+      middlewares:
+        - name: demo-strip-music
+        - name: demo-readonly-header
+      services:
+        - name: frontend
+          port: 80
+    # Mutating API → backend guard (403). Must outrank the UI catch-all.
+    - match: Host(`demo.jarnomets.com`) && PathPrefix(`/music/api`)
+      kind: Rule
+      priority: 40
+      middlewares:
+        - name: demo-strip-music
+        - name: demo-readonly-header
+      services:
+        - name: backend
+          port: 8081
+    # Exact /music → /music/ so relative ./assets resolve under /music/
+    - match: Host(`demo.jarnomets.com`) && Path(`/music`)
+      kind: Rule
+      priority: 20
+      middlewares:
+        - name: demo-slash-music
+      services:
+        - name: frontend
+          port: 80
+    # UI + static assets
+    - match: Host(`demo.jarnomets.com`) && PathPrefix(`/music`)
+      kind: Rule
+      priority: 10
+      middlewares:
+        - name: demo-strip-music
+        - name: demo-readonly-header
+      services:
+        - name: frontend
+          port: 80
+  tls:
+    secretName: demo-jarnomets-tls

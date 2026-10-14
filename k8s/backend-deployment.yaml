@@ -70,6 +70,13 @@ spec:
             secretKeyRef:
               name: music-admin
               key: JWT_SECRET
+        # Public demo SSO stub (demo.jarnomets.com/music). Set to a real user UUID.
+        - name: DEMO_USER_ID
+          valueFrom:
+            secretKeyRef:
+              name: music-admin
+              key: DEMO_USER_ID
+              optional: true
         - name: DISCOGS_TOKEN
           valueFrom:
             secretKeyRef:

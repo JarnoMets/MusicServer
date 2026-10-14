@@ -9,6 +9,12 @@ export const getAPIBaseURL = (): string => {
     return import.meta.env.VITE_API_URL
   }
 
+  // Subpath demo host: demo.jarnomets.com/music → /music/api
+  if (typeof window !== 'undefined' && window.location.hostname === 'demo.jarnomets.com') {
+    const m = window.location.pathname.match(/^\/(music)(?=\/|$)/)
+    if (m) return `/${m[1]}/api`
+  }
+
   // In production (SPA served from nginx with proxy), use relative path
   // The nginx proxy forwards /api requests to the backend container
   if (import.meta.env.MODE === 'production') {

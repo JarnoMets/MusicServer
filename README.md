@@ -188,6 +188,7 @@ MusicServer/
 | `GOOGLE_CLIENT_ID` | – | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | – | Google OAuth client secret |
 | `APP_URL` | `http://localhost:8081` | Base URL for OAuth callbacks |
+| `DEMO_USER_ID` | – | User UUID for stub SSO on `demo.jarnomets.com` (`X-Demo-Readonly`); writes stay blocked |
 | `ADMIN_TOKEN_SHA256` | – | SHA-256 hex of the admin raw token |
 | `DISCOGS_TOKEN` | – | Discogs personal access token (optional) |
 | `RUST_LOG` | `warn` | Log level |

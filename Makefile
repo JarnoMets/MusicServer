@@ -28,6 +28,7 @@ deploy: build-images
 	kubectl apply -f k8s/frontend-deployment.yaml
 	kubectl apply -f k8s/ingress.yaml
 	kubectl apply -f k8s/ingress-frontend.yaml
+	kubectl apply -f k8s/demo-ingressroute.yaml
 	@echo "Deployment complete!"
 	@echo "Check status with: kubectl get pods -n music"
 	@echo "Note: Uses shared postgres from card-scorer namespace"

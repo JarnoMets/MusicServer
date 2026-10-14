@@ -2,6 +2,7 @@ pub mod admin_middleware;
 pub mod auth;
 pub mod auth_middleware;
 pub mod auth_routes;
+pub mod demo_guard;
 pub mod audit_routes;
 pub mod db;
 pub mod models;

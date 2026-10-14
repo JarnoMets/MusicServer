@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 use music_server::admin_middleware::AdminMiddleware;
 use music_server::auth_middleware::AuthMiddleware;
+use music_server::demo_guard::DemoReadonly;
 use music_server::services::auto_download_service::{self, AutoDownloadState};
 use music_server::services::auto_genre_lookup_service;
 use music_server::services::auto_metadata_lookup_service;
@@ -176,6 +177,25 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or_else(|_| "change-this-to-a-secure-random-key-in-production".to_string());
     let app_url = std::env::var("APP_URL")
         .unwrap_or_else(|_| "http://localhost:8081".to_string());
+    let demo_user_id = std::env::var("DEMO_USER_ID")
+        .ok()
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                match Uuid::parse_str(trimmed) {
+                    Ok(id) => {
+                        log::info!("Demo SSO stub enabled for user id {id}");
+                        Some(id)
+                    }
+                    Err(e) => {
+                        log::warn!("Invalid DEMO_USER_ID={trimmed:?}: {e}");
+                        None
+                    }
+                }
+            }
+        });
 
     let app_state = web::Data::new(AppState {
         db,
@@ -187,6 +207,7 @@ async fn main() -> std::io::Result<()> {
         google_client_secret,
         jwt_secret,
         app_url,
+        demo_user_id,
         cache_update_tx,
         cached_all_tracks: Arc::new(tokio::sync::RwLock::new(None)),
         cached_artists_summary: Arc::new(tokio::sync::RwLock::new(None)),
@@ -208,6 +229,7 @@ async fn main() -> std::io::Result<()> {
             .limit(500 * 1024 * 1024); // 500MB
 
         App::new()
+            .wrap(DemoReadonly)
             .wrap(cors)
             // Logger middleware prints standardized request/response details including timing
             .wrap(Logger::default())
@@ -225,6 +247,7 @@ async fn main() -> std::io::Result<()> {
                             .route("/google/url", web::get().to(auth_routes::get_google_auth_url))
                             .route("/google/callback", web::post().to(auth_routes::google_auth))
                             .route("/google/mobile", web::post().to(auth_routes::google_auth_mobile))
+                            .route("/demo", web::get().to(auth_routes::demo_session))
                     )
                     .service(
                         web::scope("")

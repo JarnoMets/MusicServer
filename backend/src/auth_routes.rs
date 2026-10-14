@@ -201,6 +201,49 @@ pub async fn get_google_auth_url(state: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({ "url": auth_url }))
 }
 
+/// Stub SSO for the public demo host: issue a JWT for `DEMO_USER_ID` when
+/// Traefik sets `X-Demo-Readonly: true`. No Google redirect; writes stay blocked.
+pub async fn demo_session(state: web::Data<AppState>, req: HttpRequest) -> impl Responder {
+    if !crate::demo_guard::is_demo_readonly_headers(req.headers()) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "unauthorized",
+            "message": "Demo session is only available on the demo host"
+        }));
+    }
+
+    let Some(demo_user_id) = state.demo_user_id else {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "demo_not_configured",
+            "message": "Demo SSO is not configured (set DEMO_USER_ID)"
+        }));
+    };
+
+    let user = match state.db.get_user_by_id(&demo_user_id).await {
+        Ok(user) => user,
+        Err(e) => {
+            log::error!("Failed to load demo user: {}", e);
+            return HttpResponse::Unauthorized().json(serde_json::json!({
+                "error": "Demo user not found"
+            }));
+        }
+    };
+
+    let token = match create_token(&user, &state.jwt_secret) {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("Failed to create demo JWT: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to create demo token"
+            }));
+        }
+    };
+
+    HttpResponse::Ok().json(AuthResponse {
+        token,
+        user: user.into(),
+    })
+}
+
 
 /// Authenticate using a Google ID token (from Android Credential Manager).
 /// Verifies the token with Google's tokeninfo endpoint, then creates/updates

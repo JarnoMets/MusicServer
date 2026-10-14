@@ -58,6 +58,23 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /** Stub SSO on the public demo host (GET only; no Google redirect). */
+  async function loginDemo(): Promise<boolean> {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await api.get<AuthResponse>('/auth/demo')
+      setAuth(response.data)
+      return true
+    } catch (err: unknown) {
+      const maybe = err as { response?: { data?: { error?: string } }; message?: string }
+      error.value = maybe.response?.data?.error || maybe.message || 'Demo login failed'
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function getGoogleAuthUrl(): Promise<string | null> {
     try {
       const response = await api.get<{ url: string }>('/auth/google/url')
@@ -100,6 +117,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     isAdmin,
     loginWithGoogle,
+    loginDemo,
     getGoogleAuthUrl,
     fetchUser,
     logout

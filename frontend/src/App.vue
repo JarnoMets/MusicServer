@@ -24,13 +24,13 @@
                 <Icon name="headphones" :size="24" />
                 <span>Decks</span>
               </router-link>
-              <router-link to="/upload" class="sidebar-item">
+              <router-link v-if="!isDemo" to="/upload" class="sidebar-item">
                 <Icon name="upload" :size="24" />
                 <span>Upload</span>
               </router-link>
             </div>
 
-            <div v-if="isAdmin" class="nav-section">
+            <div v-if="isAdmin && !isDemo" class="nav-section">
               <div class="sidebar-header">Admin</div>
               <router-link to="/admin/genres" class="sidebar-item">
                 <Icon name="tag" :size="20" />
@@ -142,7 +142,9 @@
     </template>
 
     <ToastContainer />
-    <UploadTrackerFloating />
+    <UploadTrackerFloating v-if="!isDemo" />
+    <DemoBanner />
+    <DemoHydrateOverlay :visible="hydrating" :phase="hydratePhase" :error="hydrateError" />
     
     <ConfirmModal
       :show="confirmState.show"
@@ -158,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from './stores/auth'
@@ -166,6 +168,8 @@ import { useTheme } from './composables/useTheme'
 import { useToast } from './composables/useToast'
 import { useConfirm } from './composables/useConfirm'
 import { useFavicon } from './composables/useFavicon'
+import { isDemoHost } from './composables/useDemoReadonly'
+import { ensureMusicDemoHydrated } from './demo/hydrate'
 
 import GlobalPlayer from './shared/components/GlobalPlayer.vue'
 import ThemeSelector from './shared/components/ThemeSelector.vue'
@@ -174,6 +178,8 @@ import ConfirmModal from './shared/components/ConfirmModal.vue'
 import UploadTrackerFloating from './components/UploadTrackerFloating.vue'
 import Icon from './shared/components/Icons.vue'
 import GlobalDownloadTracker from './shared/components/GlobalDownloadTracker.vue'
+import DemoBanner from './components/DemoBanner.vue'
+import DemoHydrateOverlay from './components/DemoHydrateOverlay.vue'
 
 // Initialize systems
 useTheme()
@@ -183,6 +189,11 @@ const authStore = useAuthStore()
 const { user, isAuthenticated, isAdmin } = storeToRefs(authStore)
 const { success } = useToast()
 const { state: confirmState, handleConfirm: handleConfirmModalConfirm, handleCancel: handleConfirmModalCancel } = useConfirm()
+
+const isDemo = computed(() => isDemoHost())
+const hydrating = ref(false)
+const hydratePhase = ref('Preparing…')
+const hydrateError = ref<string | undefined>()
 
 const showUserMenu = ref(false)
 const showMobileAdmin = ref(false)
@@ -201,8 +212,23 @@ const handleLogout = () => {
   success('Logged out', 'Session ended')
 }
 
-onMounted(() => {
-  if (isAuthenticated.value && !user.value) {
+onMounted(async () => {
+  if (isDemoHost()) {
+    hydrating.value = true
+    try {
+      if (!authStore.isAuthenticated) {
+        await authStore.loginDemo()
+      }
+      await ensureMusicDemoHydrated((p) => {
+        hydratePhase.value = p.phase
+        hydrateError.value = p.error
+      })
+    } catch (e) {
+      hydrateError.value = e instanceof Error ? e.message : 'Failed to prepare demo'
+    } finally {
+      hydrating.value = false
+    }
+  } else if (isAuthenticated.value && !user.value) {
     authStore.fetchUser()
   }
 })

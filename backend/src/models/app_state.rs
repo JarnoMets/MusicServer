@@ -5,6 +5,7 @@ use crate::yt_downloader::DownloadSessions;
 use std::sync::Arc;
 use std::collections::HashSet;
 use tokio::sync::{broadcast, RwLock};
+use uuid::Uuid;
 
 pub struct AppState {
     pub db: Database,
@@ -20,6 +21,8 @@ pub struct AppState {
     pub google_client_secret: String,
     pub jwt_secret: String,
     pub app_url: String,
+    /// When set, `X-Demo-Readonly` requests authenticate as this user (env `DEMO_USER_ID`).
+    pub demo_user_id: Option<Uuid>,
 
     // Channel used to broadcast cache/update events to connected clients (SSE / websockets)
     pub cache_update_tx: broadcast::Sender<serde_json::Value>,

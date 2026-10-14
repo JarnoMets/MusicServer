@@ -97,14 +97,30 @@ where
         let state = req.app_data::<web::Data<AppState>>().expect("AppState not found");
         let jwt_secret = state.jwt_secret.clone();
         let pool = state.db.pool.clone();
+        let demo_user_id = state.demo_user_id;
+        let is_demo = crate::demo_guard::is_demo_readonly_headers(req.headers());
 
         // Extract the raw token string synchronously — avoids moving `req` before the async block.
         let token_opt = extract_token_str(&req);
 
         Box::pin(async move {
-            let auth_info = match token_opt {
-                None => None,
-                Some(ref token) => authenticate(token, &jwt_secret, &pool).await,
+            // Public demo host: Traefik sets X-Demo-Readonly — stub SSO as DEMO_USER_ID.
+            let auth_info = if is_demo {
+                match demo_user_id {
+                    Some(user_id) => Some(AuthInfo {
+                        user_id: Some(user_id),
+                        is_admin: false,
+                        auth_type: AuthType::Jwt,
+                        token_id: None,
+                        token_permissions: None,
+                    }),
+                    None => None,
+                }
+            } else {
+                match token_opt {
+                    None => None,
+                    Some(ref token) => authenticate(token, &jwt_secret, &pool).await,
+                }
             };
 
             let auth_info = match auth_info {

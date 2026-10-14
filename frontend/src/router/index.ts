@@ -1,7 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { isDemoHost } from '../composables/useDemoReadonly'
 import LoginView from '../views/LoginView.vue'
 import GoogleCallbackView from '../views/GoogleCallbackView.vue'
+
+function routerBase(): string {
+  if (typeof window === 'undefined') return '/'
+  // Only on the public demo host is the app mounted under /music/
+  if (window.location.hostname !== 'demo.jarnomets.com') return '/'
+  const m = window.location.pathname.match(/^\/(music)(?=\/|$)/)
+  return m ? `/${m[1]}/` : '/'
+}
 
 const routes = [
   {
@@ -130,7 +139,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(routerBase()),
   routes
 })
 
@@ -140,6 +149,10 @@ router.beforeEach(async (to, _from, next) => {
   
   // Set window title
   document.title = (to.meta.title as string) || 'Music Server'
+
+  if (isDemoHost() && !authStore.isAuthenticated) {
+    await authStore.loginDemo()
+  }
 
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
   const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin)

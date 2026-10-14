@@ -1,10 +1,19 @@
 import axios, { type AxiosRequestConfig } from 'axios'
 import { getAPIBaseURL, buildSSEURL } from '../utils/api'
+import { installDemoAdapter } from '../demo/adapter'
+import { musicDemoHandler } from '../demo/handlers'
 
 const API_BASE_URL = getAPIBaseURL()
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+})
+
+installDemoAdapter(api, {
+  handler: musicDemoHandler,
+  // Live audio always from server
+  isAllowlisted: (method, path) =>
+    method === 'get' && /\/music\/[^/]+\/stream$/.test(path)
 })
 
 // admin token helper: set the Authorization header for admin requests
